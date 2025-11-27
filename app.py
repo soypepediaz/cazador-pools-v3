@@ -27,7 +27,7 @@ def go_to_scanner():
 # VISTA 1: ESCÁNER DE MERCADO
 # ==========================================
 if st.session_state.view == 'scanner':
-    st.title("🦄 Cazador de Oportunidades (mucho) Pools")
+    st.title("🏹 Cazador de Oportunidades (mucho) Pools")
     st.markdown("Encuentra pools rentables y **analízalos a fondo** en el laboratorio.")
 
     # --- Configuración Sidebar ---
