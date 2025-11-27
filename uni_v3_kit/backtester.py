@@ -19,7 +19,6 @@ class Backtester:
         
         p_quote_usd = p_base_usd / p_native
         
-        # --- AQUÍ ESTABA EL ERROR CORREGIDO ---
         sqrt_p = math.sqrt(p_native)
         sqrt_a = math.sqrt(lower)
         sqrt_b = math.sqrt(upper)
@@ -161,7 +160,7 @@ class Backtester:
                 "Price": p_native_t,
                 "Range Min": lower_price,
                 "Range Max": upper_price,
-                "Range Width %": range_width_pct, 
+                "Range Width %": range_width_pct * 100, # <-- CORRECCIÓN: Multiplicamos por 100
                 "In Range": in_range,
                 "APR Period": float(apr_snapshot) if apr_snapshot else 0.0,
                 "Fees Period": fees_earned_period,
