@@ -12,7 +12,7 @@ if 'view' not in st.session_state:
     st.session_state.view = 'scanner'
 if 'selected_pool' not in st.session_state:
     st.session_state.selected_pool = None
-# NUEVO: Guardamos los resultados del escáner para que no se borren al interactuar
+# Persistencia de resultados para evitar recargas
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 
@@ -54,9 +54,9 @@ if st.session_state.view == 'scanner':
         scanner = MarketScanner()
         with st.spinner(f"Analizando {chain}..."):
             try:
-                # Guardamos el resultado en session_state en lugar de una variable local
+                # Guardamos el resultado en session_state
                 df = scanner.scan(chain, min_tvl, dias_analisis)
-                st.session_state.scan_results = df  # <--- PERSISTENCIA
+                st.session_state.scan_results = df
                 
                 if df.empty:
                     st.warning("No se encontraron pools con esos filtros.")
@@ -65,14 +65,11 @@ if st.session_state.view == 'scanner':
             except Exception as e:
                 st.error(f"Error en el escaneo: {e}")
 
-    # --- Renderizado de Resultados (Fuera del botón) ---
-    # Esto se ejecuta siempre que haya datos guardados, sobreviviendo a recargas
+    # --- Renderizado de Resultados ---
     if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
         df = st.session_state.scan_results
         
         # 1. Mostrar Tabla Resumen
-        col_apr = f"APR ({dias_analisis}d)"
-        
         st.dataframe(
             df,
             use_container_width=True,
@@ -80,7 +77,7 @@ if st.session_state.view == 'scanner':
             column_config={
                 "Address": None, # Ocultamos la dirección técnica
                 "TVL": st.column_config.NumberColumn(format="$%d"),
-                col_apr: st.column_config.NumberColumn(format="%.2f%%"),
+                "APR Media": st.column_config.NumberColumn(format="%.1f%%"),
                 "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
                 "Riesgo IL": st.column_config.NumberColumn(format="%.1f%%"),
                 "Margen": st.column_config.NumberColumn(format="%.1f%%")
@@ -98,12 +95,11 @@ if st.session_state.view == 'scanner':
             seleccion = st.selectbox("Selecciona un pool para hacer Backtesting:", opciones)
         
         with col_btn:
-            # Espaciado para alinear botón
             st.write("") 
             st.write("") 
             if st.button("Analizar Pool ➡️"):
-                # Extraemos la fila completa del DF
                 if seleccion:
+                    # Extraemos la fila completa del DF
                     row = df[df['Par'] == seleccion].iloc[0]
                     go_to_lab(row)
                     st.rerun()
@@ -126,10 +122,11 @@ elif st.session_state.view == 'lab':
     
     # Métricas clave del pool seleccionado
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Protocolo", f"{pool['Protocolo']} ({pool['Red']})")
+    # CORRECCIÓN AQUÍ: Usamos 'DEX' en vez de 'Protocolo'
+    c1.metric("Protocolo", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    c3.metric("Volatilidad Real", f"{pool['Volatilidad']:.1f}%")
-    c4.metric("Veredicto", pool['Veredicto'])
+    c3.metric("APR Media", f"{pool['APR Media']:.1f}%")
+    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
     
     st.markdown("---")
     
@@ -150,7 +147,7 @@ elif st.session_state.view == 'lab':
     # --- Ejecución ---
     if st.button("🚀 Ejecutar Simulación Histórica"):
         
-        # Recuperamos la dirección del pool (Address) que guardamos en el DF
+        # Recuperamos la dirección del pool (Address)
         address = pool.get('Address')
         
         if not address:
@@ -164,13 +161,11 @@ elif st.session_state.view == 'lab':
                 history = provider.get_pool_history(address)
                 
                 # 2. Corremos la simulación
-                # Nota: analyzer.py nos dio el Fee como 0.003 (decimal) o similar, lo pasamos.
-                # Como en el DF final guardamos el fee formateado o procesado, intentamos recuperarlo.
-                # Si no, usamos un estándar 0.003 (0.3%) o 0.0005 (0.05%) según el nombre
+                # Estimación de Fee Tier basada en el nombre
                 fee_estimado = 0.003 
-                if "0.05%" in pool['Par']: fee_estimado = 0.0005
-                elif "0.01%" in pool['Par']: fee_estimado = 0.0001
-                elif "1%" in pool['Par']: fee_estimado = 0.01
+                if "0.05%" in str(pool['Par']): fee_estimado = 0.0005
+                elif "0.01%" in str(pool['Par']): fee_estimado = 0.0001
+                elif "1%" in str(pool['Par']): fee_estimado = 0.01
                 
                 df_res, min_p, max_p = tester.run_simulation(
                     history, 
