@@ -23,8 +23,8 @@ class MarketScanner:
                 if tvl >= min_tvl:
                     candidates.append(p)
         
-        # Cortamos a los 20 con más volumen para no saturar la API
-        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:20]
+        # Cortamos a los 50 con más volumen para no saturar la API
+        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:50]
         
         results = []
         samples_needed = days_window * 3
