@@ -51,34 +51,31 @@ if st.sidebar.button("🔍 Escanear Mercado"):
             if not df.empty:
                 st.success(f"¡Análisis completado! Encontrados {len(df)} pools.")
                 
-                col_apr_name = f"APR ({dias_analisis}d)"
-
-                # Configuración visual
-                # IMPORTANTE: Usamos '%.1%' o '%.2%' (formato d3).
-                # Esto multiplica automáticamente por 100 el valor decimal (0.5 -> 50%)
+                # Configuración visual robusta (Formato estándar)
+                # %.1f%% -> Toma el número 50.5, píntalo con 1 decimal (50.5) y añade un % literal.
                 column_config = {
                     "Par": st.column_config.TextColumn("Par", width="medium", help="Nombre oficial del pool"),
                     "Red": st.column_config.TextColumn("Red"),
-                    "Protocolo": st.column_config.TextColumn("DEX"),
+                    "DEX": st.column_config.TextColumn("DEX"),
                     "TVL": st.column_config.NumberColumn(
                         "TVL",
                         format="$%d",
                     ),
-                    col_apr_name: st.column_config.NumberColumn(
+                    "APR Media": st.column_config.NumberColumn(
                         "APR Media",
-                        format="%.1%"   # Convierte 0.505 en 50.5%
+                        format="%.1f%%"
                     ),
                     "Volatilidad": st.column_config.NumberColumn(
                         "Volatilidad",
-                        format="%.1%"   # Convierte 0.30 en 30.0%
+                        format="%.1f%%" 
                     ),
-                    "Costo Riesgo": st.column_config.NumberColumn(
+                    "Riesgo IL": st.column_config.NumberColumn(
                         "Riesgo IL",
-                        format="%.1%"
+                        format="%.1f%%"
                     ),
                     "Margen": st.column_config.NumberColumn(
                         "Margen",
-                        format="%.1%"
+                        format="%.1f%%"
                     ),
                     "Veredicto": st.column_config.TextColumn("Veredicto")
                 }
@@ -92,7 +89,7 @@ if st.sidebar.button("🔍 Escanear Mercado"):
                 
                 st.markdown(f"""
                 **Detalles del reporte:**
-                * **APR ({dias_analisis}d):** Rendimiento promedio anualizado en los últimos {dias_analisis} días.
+                * **APR Media:** Rendimiento promedio anualizado en los últimos {dias_analisis} días.
                 * **Volatilidad:** Fluctuación del precio nativo (Ratio A/B) anualizada.
                 """)
             else:
