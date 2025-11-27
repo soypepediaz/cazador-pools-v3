@@ -96,6 +96,7 @@ if st.session_state.view == 'scanner':
             st.write("") 
             if st.button("Analizar Pool ➡️"):
                 if seleccion:
+                    # Extraemos la fila completa del DF
                     row = df[df['Par'] == seleccion].iloc[0]
                     go_to_lab(row)
                     st.rerun()
@@ -127,15 +128,12 @@ elif st.session_state.view == 'lab':
     st.sidebar.header("⚙️ Parámetros de Simulación")
     inversion = st.sidebar.number_input("Inversión Inicial ($)", 1000, 1000000, 10000)
     
-    # Nuevos Sliders separados
     dias_sim = st.sidebar.slider("Días a Simular (Duración)", 7, 180, 30)
     vol_days = st.sidebar.slider("Ventana Volatilidad (Lookback)", 3, 30, 7, help="Días previos usados para calcular el ancho del rango.")
     
     st.sidebar.subheader("Estrategia")
-    # Selector de SD
     sd_mult = st.sidebar.slider("Amplitud (Desviaciones Típicas)", 0.1, 3.0, 1.0, step=0.1)
     
-    # Checkbox Rebalanceo
     auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear", value=False)
     if auto_rebalance:
         st.sidebar.caption("⚠️ Se asume un coste de swap del 0.3% en cada rebalanceo.")
@@ -152,7 +150,7 @@ elif st.session_state.view == 'lab':
                 provider = DataProvider()
                 tester = Backtester()
                 
-                # 1. Bajamos la historia COMPLETA
+                # 1. Bajamos la historia completa
                 pool_full_data = provider.get_pool_history(address)
                 history_list = pool_full_data.get('history', [])
                 
@@ -163,14 +161,13 @@ elif st.session_state.view == 'lab':
                 elif "1%" in str(pool['Par']): fee_estimado = 0.01
                 elif "0.3%" in str(pool['Par']): fee_estimado = 0.003
                 
-                # 3. Ejecutar simulación (NUEVA FIRMA CON PARAMETROS AVANZADOS)
-                # Ojo: Pasamos sim_days Y vol_days
+                # 3. Ejecutar simulación
                 df_res, min_p, max_p, meta = tester.run_simulation(
                     history_list, 
                     inversion, 
                     sd_mult, 
-                    sim_days=dias_sim,    # Duración del backtest
-                    vol_days=vol_days,    # Ventana de cálculo
+                    sim_days=dias_sim,    
+                    vol_days=vol_days,    
                     fee_tier=fee_estimado,
                     auto_rebalance=auto_rebalance
                 )
@@ -193,11 +190,13 @@ elif st.session_state.view == 'lab':
 
                     # Explicación del rango calculado
                     precio_entrada = df_res.iloc[0]['Price']
-                    # El porcentaje exacto puede variar si hubo rebalanceos, mostramos el inicial o último
+                    # Usamos el ancho inicial guardado en metadata para mostrar la configuración de partida
+                    rango_pct = meta['initial_range_width_pct'] * 100
+                    
                     st.info(f"""
                     **Configuración:** Simulación de **{dias_sim} días**.  
                     El rango inicial se calculó usando la volatilidad de los **{vol_days} días previos** al inicio.
-                    Precio entrada: **{precio_entrada:.4f}**. Límites iniciales: **{min_p:.4f}** - **{max_p:.4f}**.
+                    Precio entrada: **{precio_entrada:.4f}**. Límites iniciales: **{min_p:.4f}** - **{max_p:.4f}** (±{rango_pct:.1f}%).
                     """)
 
                     # --- GRÁFICOS ---
@@ -215,8 +214,12 @@ elif st.session_state.view == 'lab':
                     # Coloreamos puntos según estado
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera de Rango')
                     
+                    # Creamos columna formateada para el hover
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%")
+
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
-                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera de Rango': 'red'})
+                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera de Rango': 'red'},
+                                           hover_data={'Ancho Rango': True})
                     
                     # Línea de fondo
                     fig_price.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
@@ -227,8 +230,13 @@ elif st.session_state.view == 'lab':
                         fig_price.add_hline(y=max_p, line_dash="dash", line_color="green")
                     else:
                         # Rango dinámico (Pintamos las bandas que cambian)
-                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Min').update_traces(line=dict(color='red', dash='dash')).data[0])
-                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Max').update_traces(line=dict(color='green', dash='dash')).data[0])
+                        line_min = px.line(df_res, x='Date', y='Range Min', hover_data={'Ancho Rango': True})
+                        line_min.update_traces(line=dict(color='red', dash='dash'))
+                        fig_price.add_traces(line_min.data[0])
+                        
+                        line_max = px.line(df_res, x='Date', y='Range Max', hover_data={'Ancho Rango': True})
+                        line_max.update_traces(line=dict(color='green', dash='dash'))
+                        fig_price.add_traces(line_max.data[0])
 
                     st.plotly_chart(fig_price, use_container_width=True)
                     
@@ -236,7 +244,8 @@ elif st.session_state.view == 'lab':
                     with st.expander("Ver tabla de datos detallada", expanded=True):
                         # Ordenar columnas
                         cols_to_show = [
-                            "Date", "Price", "Range Min", "Range Max", "In Range", 
+                            "Date", "Price", "Range Min", "Range Max", 
+                            "Range Width %", # Nueva columna
                             "APR Period", "Fees Period", "Fees Acum", 
                             "Valor Principal", "Valor Total", "HODL Value"
                         ]
@@ -250,13 +259,13 @@ elif st.session_state.view == 'lab':
                                 "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
                                 "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
                                 "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
+                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.1f%%"),
                                 "APR Period": st.column_config.NumberColumn("APR (8h)", format="%.2f%%"),
                                 "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"),
                                 "Fees Acum": st.column_config.NumberColumn("Fees Total", format="$%.2f"),
                                 "Valor Principal": st.column_config.NumberColumn("Principal", format="$%.2f"),
                                 "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
                                 "HODL Value": st.column_config.NumberColumn("HODL", format="$%.2f"),
-                                "In Range": st.column_config.CheckboxColumn("En Rango"),
                             }
                         )
                         
