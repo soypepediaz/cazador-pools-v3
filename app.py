@@ -117,7 +117,7 @@ elif st.session_state.view == 'lab':
     st.title(f"🧪 Laboratorio: {pool['Par']}")
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Protocolo", f"{pool['DEX']} ({pool['Red']})") 
+    c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     c3.metric("APR Media", f"{pool['APR Media']:.1f}%")
     c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
@@ -129,9 +129,14 @@ elif st.session_state.view == 'lab':
     inversion = st.sidebar.number_input("Inversión Inicial ($)", 1000, 1000000, 10000)
     dias_sim = st.sidebar.slider("Días de Historial a simular", 7, 90, 30)
     
-    st.sidebar.subheader("Estrategia de Rango")
-    st.sidebar.markdown("Definir rango ±% sobre el precio inicial.")
-    rango_width = st.sidebar.slider("Amplitud del Rango (±%)", 5, 100, 20) / 100.0
+    st.sidebar.subheader("Estrategia")
+    # NUEVO: Selector de Desviaciones Típicas (SD)
+    sd_mult = st.sidebar.slider("Amplitud (Desviaciones Típicas)", 0.1, 3.0, 1.0, step=0.1)
+    
+    # NUEVO: Rebalanceo
+    auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear si sale de rango", value=False)
+    if auto_rebalance:
+        st.sidebar.caption("⚠️ Se asume un coste de swap del 0.3% en cada rebalanceo.")
     
     # --- Ejecución ---
     if st.button("🚀 Ejecutar Simulación Histórica"):
@@ -141,77 +146,90 @@ elif st.session_state.view == 'lab':
         if not address:
             st.error("Error: Falta la dirección del contrato. Vuelve a escanear.")
         else:
-            with st.spinner("Simulando estrategia..."):
+            with st.spinner("Calculando volatilidad y simulando..."):
                 provider = DataProvider()
                 tester = Backtester()
                 
-                # Extraemos la lista 'history' del objeto pool
+                # 1. Bajamos la historia
                 pool_full_data = provider.get_pool_history(address)
                 history_list = pool_full_data.get('history', [])
                 
-                # Estimación de Fee Tier
+                # 2. Estimación de Fee Tier
                 fee_estimado = 0.003 
                 if "0.05%" in str(pool['Par']): fee_estimado = 0.0005
                 elif "0.01%" in str(pool['Par']): fee_estimado = 0.0001
                 elif "1%" in str(pool['Par']): fee_estimado = 0.01
                 elif "0.3%" in str(pool['Par']): fee_estimado = 0.003
                 
-                # Pasamos la lista limpia al simulador
-                df_res, min_p, max_p = tester.run_simulation(
+                # 3. Ejecutar simulación (NUEVA FIRMA CON 4 RETORNOS)
+                df_res, min_p, max_p, meta = tester.run_simulation(
                     history_list, 
                     inversion, 
-                    rango_width, 
+                    sd_mult, 
                     days=dias_sim, 
-                    fee_tier=fee_estimado
+                    fee_tier=fee_estimado,
+                    auto_rebalance=auto_rebalance
                 )
                 
                 if df_res is not None and not df_res.empty:
-                    st.success("Simulación completada.")
+                    st.success(f"Simulación completada con Volatilidad Anual: **{meta['volatility']*100:.1f}%**")
                     
-                    # Resultados numéricos
+                    # --- RESULTADOS ---
                     res_final = df_res.iloc[-1]
                     roi_v3 = (res_final['Valor Total'] - inversion) / inversion
                     roi_hodl = (res_final['HODL Value'] - inversion) / inversion
                     
-                    k1, k2, k3 = st.columns(3)
-                    k1.metric("Valor Final (V3)", f"${res_final['Valor Total']:,.2f}", delta=f"{roi_v3*100:.2f}%")
-                    k2.metric("Valor si HODL", f"${res_final['HODL Value']:,.2f}", delta=f"{roi_hodl*100:.2f}%")
-                    k3.metric("Fees Ganadas", f"${res_final['Fees Acum']:,.2f}")
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("Valor Final (V3)", f"${res_final['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
+                    k2.metric("Valor si HODL", f"${res_final['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
+                    k3.metric("Fees Totales", f"${res_final['Fees Acum']:,.2f}")
+                    k4.metric("Eficiencia Capital", f"{meta['efficiency']:.1f}x", help="Multiplicador de APR por concentración")
                     
-                    # --- 1. EXPLICACIÓN DEL RANGO ---
+                    if auto_rebalance:
+                        st.info(f"🔄 Se realizaron **{meta['rebalances']} rebalanceos** durante el periodo.")
+
+                    # Explicación del rango calculado
                     precio_entrada = df_res.iloc[0]['Price']
+                    rango_pct = meta['range_width_pct'] * 100
                     st.info(f"""
-                    **Análisis del Rango Seleccionado:** Has configurado una amplitud de **±{rango_width*100:.0f}%**.  
-                    Con un precio de entrada de **{precio_entrada:.4f}**, tu posición gana comisiones solo si el precio se mantiene entre **{min_p:.4f}** y **{max_p:.4f}**.
+                    **Rango Calculado:** ±{rango_pct:.1f}% (Basado en {sd_mult} SD).  
+                    Precio entrada: **{precio_entrada:.4f}**. Límites iniciales: **{min_p:.4f}** - **{max_p:.4f}**.
                     """)
 
-                    # --- 2. GRÁFICO RENDIMIENTO ---
+                    # --- GRÁFICOS ---
+                    
+                    # 1. Rendimiento
                     st.subheader("💰 Rendimiento Acumulado")
-                    fig = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                  color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
-                                  labels={"value": "Valor (USD)", "variable": "Estrategia"})
-                    st.plotly_chart(fig, use_container_width=True)
+                    fig_rend = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
+                                       color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
+                                       labels={"value": "Valor (USD)", "variable": "Estrategia"})
+                    st.plotly_chart(fig_rend, use_container_width=True)
                     
-                    # --- 3. GRÁFICO PRECIO VS RANGO ---
-                    st.subheader("📊 Precio vs Rango")
+                    # 2. Precio y Rangos
+                    st.subheader("📊 Precio y Estado")
                     
-                    # Creamos columna Estado
-                    df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 Cobrando Fees' if x else '🔴 Fuera de Rango')
+                    # Coloreamos puntos según estado
+                    df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera de Rango')
                     
-                    fig2 = px.scatter(df_res, x='Date', y='Price', color='Estado',
-                                      color_discrete_map={'🟢 Cobrando Fees': 'green', '🔴 Fuera de Rango': 'red'},
-                                      title="Evolución del Precio y Estado de la Posición")
+                    fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
+                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera de Rango': 'red'})
                     
-                    fig2.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
+                    # Línea de fondo para conectar
+                    fig_price.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
                     
-                    # Líneas de Rango
-                    fig2.add_hline(y=min_p, line_dash="dash", line_color="red", annotation_text=f"Min: {min_p:.4f}")
-                    fig2.add_hline(y=max_p, line_dash="dash", line_color="green", annotation_text=f"Max: {max_p:.4f}")
-                    
-                    st.plotly_chart(fig2, use_container_width=True)
+                    # Si no hay rebalanceo, pintamos líneas fijas. Si hay, pintamos las bandas dinámicas.
+                    if not auto_rebalance:
+                        fig_price.add_hline(y=min_p, line_dash="dash", line_color="red")
+                        fig_price.add_hline(y=max_p, line_dash="dash", line_color="green")
+                    else:
+                        # Pintamos las bandas dinámicas que cambian con el rebalanceo
+                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Min').update_traces(line=dict(color='red', dash='dash')).data[0])
+                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Max').update_traces(line=dict(color='green', dash='dash')).data[0])
+
+                    st.plotly_chart(fig_price, use_container_width=True)
                     
                     with st.expander("Ver tabla de datos detallada"):
                         st.dataframe(df_res)
                         
                 else:
-                    st.error("No hay suficientes datos históricos para este pool.")
+                    st.error("Datos insuficientes para simular.")
