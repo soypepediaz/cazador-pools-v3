@@ -51,18 +51,15 @@ class Backtester:
         if not sim_data: return None
 
         # --- 1. Cálculo de Volatilidad y Rango ---
-        # Extraemos precios para calcular volatilidad real del periodo
         prices_native = [x.get('priceNative') or x.get('priceUsd') for x in sim_data]
         vol_annual = self.math.calculate_realized_volatility(prices_native)
         
-        # Ancho del rango basado en SD (Desviación Típica)
-        # Escalamos la volatilidad anual al periodo de holding esperado
+        # Ancho del rango basado en SD
         time_scaling = math.sqrt(days / 365.0)
         range_width_pct = vol_annual * time_scaling * sd_multiplier
-        range_width_pct = max(0.01, min(range_width_pct, 2.0)) # Cap de seguridad (1% a 200%)
+        range_width_pct = max(0.01, min(range_width_pct, 2.0))
         
-        # Multiplicador de Eficiencia (Boost de APR por concentración)
-        efficiency_mult = self.math.calculate_concentration_multiplier(range_width_pct)
+        # NOTA: Hemos eliminado el cálculo de 'efficiency_mult' aquí.
 
         # --- 2. Inicialización (Día 0) ---
         start_point = sim_data[0]
@@ -75,12 +72,11 @@ class Backtester:
         lower_price = p_native_0 * (1 - range_width_pct)
         upper_price = p_native_0 * (1 + range_width_pct)
         
-        # Calculamos Liquidez Inicial y Tokens para HODL
+        # Calculamos Liquidez Inicial
         liquidity, hodl_x, hodl_y = self._calculate_liquidity_and_amounts(
             investment_usd, p_native_0, p_base_usd_0, lower_price, upper_price
         )
         
-        # Variables de estado
         current_principal_usd = investment_usd
         accumulated_fees_usd = 0.0
         rebalance_count = 0
@@ -96,61 +92,47 @@ class Backtester:
             
             p_quote_usd_t = p_base_usd_t / p_native_t
             
-            # --- A. Lógica de Rebalanceo ---
+            # --- A. Rebalanceo ---
             in_range = lower_price <= p_native_t <= upper_price
             
             if auto_rebalance and not in_range:
-                # 1. Calcular valor residual de la posición actual (Mark-to-Market antes de cerrar)
-                # Como estamos fuera de rango, tenemos 100% de un solo token
+                # Calcular valor residual al salir
                 curr_val_usd = 0
-                if p_native_t < lower_price:
-                    # Todo en Base (X)
-                    amount_x = self.math.calculate_amounts(liquidity, math.sqrt(lower_price), math.sqrt(lower_price), math.sqrt(upper_price))[0]
-                    # Nota: Usamos sqrt(lower) porque el precio real está más abajo, pero la liquidez V3 se quedó allí
-                    # Corrección: En V3, si P < Lower, tienes cantidad fija de X.
-                    # Usamos la función math_core para obtener esa cantidad exacta.
-                    ax, ay = self.math.calculate_amounts(liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price))
-                    curr_val_usd = ax * p_base_usd_t
-                else:
-                    # Todo en Quote (Y)
-                    ax, ay = self.math.calculate_amounts(liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price))
-                    curr_val_usd = ay * p_quote_usd_t
+                # Usamos cantidades exactas de V3 al salir del rango
+                ax, ay = self.math.calculate_amounts(liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price))
+                curr_val_usd = (ax * p_base_usd_t) + (ay * p_quote_usd_t)
                 
-                # 2. Aplicar coste de Swap/Gas (0.3% del principal)
+                # Penalización swap
                 current_principal_usd = curr_val_usd * 0.997
                 
-                # 3. Recentrar Rango
+                # Recentrar
                 lower_price = p_native_t * (1 - range_width_pct)
                 upper_price = p_native_t * (1 + range_width_pct)
                 
-                # 4. Recalcular Liquidez (L) con el nuevo dinero y nuevo rango
                 liquidity, _, _ = self._calculate_liquidity_and_amounts(
                     current_principal_usd, p_native_t, p_base_usd_t, lower_price, upper_price
                 )
-                
                 rebalance_count += 1
-                in_range = True # Ahora estamos dentro
+                in_range = True
             
-            # --- B. Valoración Mark-to-Market ---
-            # Cuántos tokens tengo AHORA en el pool
+            # --- B. Valoración (Mark-to-Market) ---
             curr_x, curr_y = self.math.calculate_amounts(
                 liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price)
             )
-            
             val_pos_usd = (curr_x * p_base_usd_t) + (curr_y * p_quote_usd_t)
             
-            # --- C. Fees (Con Boost de Eficiencia) ---
+            # --- C. Fees (Directo del API) ---
             apr_snapshot = snap.get('apr', 0)
-            if in_range and apr_snapshot:
-                # APR Base / Periodos
-                base_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
-                # APR Real = Base * Eficiencia
-                real_yield = base_yield * efficiency_mult
-                
-                fees_earned = val_pos_usd * real_yield
-                accumulated_fees_usd += fees_earned
+            fees_earned_period = 0.0
             
-            # --- D. HODL Benchmark (Tokens fijos día 0) ---
+            if in_range and apr_snapshot:
+                # Lógica simplificada: Usamos el APR base del pool sin multiplicador de concentración.
+                # Asumimos que el APR reportado es el que obtenemos si estamos en rango.
+                base_period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
+                fees_earned_period = val_pos_usd * base_period_yield
+                accumulated_fees_usd += fees_earned_period
+            
+            # --- D. HODL ---
             val_hodl_now = (hodl_x * p_base_usd_t) + (hodl_y * p_quote_usd_t)
             
             results.append({
@@ -159,6 +141,8 @@ class Backtester:
                 "Range Min": lower_price,
                 "Range Max": upper_price,
                 "In Range": in_range,
+                "APR Period": float(apr_snapshot) if apr_snapshot else 0.0, # NUEVO
+                "Fees Period": fees_earned_period,                          # NUEVO
                 "Fees Acum": accumulated_fees_usd,
                 "Valor Principal": val_pos_usd,
                 "Valor Total": val_pos_usd + accumulated_fees_usd,
@@ -168,7 +152,6 @@ class Backtester:
         metadata = {
             "volatility": vol_annual,
             "range_width_pct": range_width_pct,
-            "efficiency": efficiency_mult,
             "rebalances": rebalance_count
         }
             
