@@ -9,9 +9,9 @@ class MarketScanner:
 
     def scan(self, chain_filter, min_tvl, days_window=7):
         """
-        days_window: Número de días para calcular la media móvil (7, 14, 30).
+        Escanea el mercado aplicando filtros y calculando métricas históricas.
         """
-        # 1. Obtener todos los pools
+        # 1. Obtener todos los pools (API 1)
         raw_pools = self.data.get_all_pools()
         
         # 2. Filtrar básicos (Chain y TVL)
@@ -26,42 +26,48 @@ class MarketScanner:
                 if tvl >= min_tvl:
                     candidates.append(p)
         
-        # Si hay demasiados, cortamos a los 20 con más volumen para no saturar
-        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:30]
+        # Ordenamos por volumen y cortamos a los 20 mejores para no saturar la API
+        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:20]
         
         results = []
         
-        # Calculamos cuántos datos necesitamos del historial
+        # Calculamos cuántos datos necesitamos del historial (3 snapshots por día aprox)
         samples_needed = days_window * 3
         
         # 3. Análisis Profundo de cada candidato
         for pool in candidates:
+            # Identificar ID para la API histórica
             address = pool.get('pairAddress') 
             if not address: address = pool.get('_id') 
 
-            # Descargar historia
-            history = self.data.get_pool_history(address)
+            # Descargar detalle completo (API 2)
+            pool_detail = self.data.get_pool_history(address)
+            history = pool_detail.get('history', [])
             
-            # --- CORTE DE TIEMPO (MEDIA MÓVIL) ---
+            # Si no hay historia reciente, saltamos
             recent_data = history[:samples_needed] if history else []
-            
-            if not recent_data:
-                continue 
+            if not recent_data: continue
 
-            # A. Calcular APR Promedio (SMA)
+            # --- A. APR Promedio (Media Móvil) ---
             aprs = [x.get('apr', 0) for x in recent_data if x.get('apr') is not None]
+            
             if aprs:
-                apr_promedio = sum(aprs) / len(aprs) / 100.0 # Pasamos a decimal
+                # La API devuelve el APR como número entero/flotante (ej: 50.5 significa 50.5%)
+                # Calculamos la media
+                avg_apr_raw = sum(aprs) / len(aprs)
+                # Lo convertimos a decimal (0.505) para que Streamlit lo formatee después
+                apr_promedio = avg_apr_raw / 100.0
             else:
                 apr_promedio = 0.0
 
-            # B. Calcular Volatilidad (Usando priceNative) en el mismo periodo
+            # --- B. Volatilidad (Usando priceNative) ---
             prices = []
             for x in recent_data:
                 p_native = x.get('priceNative')
                 p_usd = x.get('priceUsd')
                 
-                # Prioridad: Precio Nativo
+                # Prioridad absoluta: Precio Nativo (Ratio entre tokens)
+                # Esto evita que pares estables parezcan volátiles si el USD cambia
                 if p_native is not None and isinstance(p_native, (int, float)) and p_native > 0:
                     prices.append(float(p_native))
                 elif p_usd is not None and isinstance(p_usd, (int, float)) and p_usd > 0:
@@ -70,7 +76,7 @@ class MarketScanner:
             vol_real = self.math.calculate_realized_volatility(prices)
             costo_riesgo = self.math.calculate_il_risk_cost(vol_real)
             
-            # C. Margen y Veredicto
+            # --- C. Margen y Veredicto ---
             margen = apr_promedio - costo_riesgo
             
             veredicto = "❌ REKT"
@@ -78,36 +84,29 @@ class MarketScanner:
             elif margen > 0.05: veredicto = "✅ OK"
             elif margen > 0: veredicto = "⚠️ JUSTO"
             
-            # D. Datos Extra (CORREGIDO: CÁLCULOS NUMÉRICOS)
+            # --- D. Datos para la tabla (NÚMEROS PUROS) ---
             
-            # Corrección Fee Tier: Dividimos por 1.000.000 para obtener el decimal correcto
-            try:
-                fee_raw = float(pool.get('feeTier', 0))
-                fee_val = fee_raw / 10000.0 
-            except:
-                fee_val = 0.0
+            # Recuperamos el nombre oficial del pool desde la API 2
+            # Si falla, construimos uno básico con los tickers
+            base = pool.get('BaseToken', '?')
+            quote = pool.get('QuoteToken', '?')
+            nombre_par = pool_detail.get('poolName', f"{base}-{quote}")
 
-            # Limpieza de nombres
             dex_id = pool.get('DexId', 'Unknown').capitalize().replace("-v3", "").replace(" v3", "")
             chain_id = pool.get('ChainId', 'Unknown').capitalize()
             
-            base = pool.get('BaseToken', '?')
-            quote = pool.get('QuoteToken', '?')
-
-            # E. Construir fila (ENTREGANDO NÚMEROS PUROS PARA ORDENACIÓN)
-            # Nota: No usamos f"{...}%" aquí para no romper la ordenación de la tabla.
-            # El formato visual se encarga 'app.py' con st.column_config.
+            # Añadimos la fila. Importante: APR, Vol, Riesgo y Margen van como FLOAT
+            # para que la ordenación en la tabla funcione numéricamente.
             results.append({
-                "Par": f"{base}-{quote}",
+                "Par": nombre_par,
                 "Red": chain_id,
                 "Protocolo": dex_id,
-                "Fee": fee_val,                         # Número float
-                "TVL": float(pool.get('Liquidity',0)),  # Número float
-                f"APR ({days_window}d)": apr_promedio,  # Número float
-                "Volatilidad": vol_real,                # Número float
-                "Costo Riesgo": costo_riesgo,           # Número float
-                "Margen": margen,                       # Número float
-                "Veredicto": veredicto                  # Texto
+                "TVL": float(pool.get('Liquidity',0)),
+                f"APR ({days_window}d)": apr_promedio,
+                "Volatilidad": vol_real,
+                "Costo Riesgo": costo_riesgo,
+                "Margen": margen,
+                "Veredicto": veredicto
             })
             
         return pd.DataFrame(results)
