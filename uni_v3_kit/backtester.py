@@ -1,4 +1,5 @@
 import pandas as pd
+import math
 from .math_core import V3Math
 
 class Backtester:
