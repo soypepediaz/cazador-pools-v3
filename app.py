@@ -12,6 +12,9 @@ if 'view' not in st.session_state:
     st.session_state.view = 'scanner'
 if 'selected_pool' not in st.session_state:
     st.session_state.selected_pool = None
+# NUEVO: Guardamos los resultados del escáner para que no se borren al interactuar
+if 'scan_results' not in st.session_state:
+    st.session_state.scan_results = None
 
 def go_to_lab(pool_data):
     st.session_state.selected_pool = pool_data
@@ -46,52 +49,67 @@ if st.session_state.view == 'scanner':
     st.sidebar.markdown("---")
     dias_analisis = st.sidebar.slider("Ventana Media Móvil (Días)", 3, 30, 7)
 
-    # --- Ejecución ---
+    # --- Ejecución del Escáner ---
     if st.sidebar.button("🔍 Escanear Mercado"):
         scanner = MarketScanner()
         with st.spinner(f"Analizando {chain}..."):
             try:
-                # Nota: Asegúrate de que analyzer.py devuelve la columna 'Address' aunque sea oculta
+                # Guardamos el resultado en session_state en lugar de una variable local
                 df = scanner.scan(chain, min_tvl, dias_analisis)
+                st.session_state.scan_results = df  # <--- PERSISTENCIA
                 
-                if not df.empty:
-                    st.success(f"Encontrados {len(df)} pools.")
-                    
-                    # 1. Mostrar Tabla Resumen
-                    col_apr = f"APR ({dias_analisis}d)"
-                    
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Address": None, # Ocultamos la dirección técnica
-                            "TVL": st.column_config.NumberColumn(format="$%d"),
-                            col_apr: st.column_config.NumberColumn(format="%.2f%%"),
-                            "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
-                            "Riesgo IL": st.column_config.NumberColumn(format="%.1f%%"),
-                            "Margen": st.column_config.NumberColumn(format="%.1f%%")
-                        }
-                    )
-                    
-                    st.markdown("---")
-                    st.subheader("🧪 Pasar al Laboratorio")
-                    
-                    # Selector para elegir qué pool analizar
-                    opciones = df['Par'].tolist()
-                    seleccion = st.selectbox("Selecciona un pool para hacer Backtesting:", opciones)
-                    
-                    if st.button("Analizar Pool Seleccionado ➡️"):
-                        # Extraemos la fila completa del DF
-                        row = df[df['Par'] == seleccion].iloc[0]
-                        go_to_lab(row)
-                        st.rerun()
-                        
-                else:
+                if df.empty:
                     st.warning("No se encontraron pools con esos filtros.")
+                else:
+                    st.success(f"Encontrados {len(df)} pools.")
             except Exception as e:
                 st.error(f"Error en el escaneo: {e}")
 
+    # --- Renderizado de Resultados (Fuera del botón) ---
+    # Esto se ejecuta siempre que haya datos guardados, sobreviviendo a recargas
+    if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
+        df = st.session_state.scan_results
+        
+        # 1. Mostrar Tabla Resumen
+        col_apr = f"APR ({dias_analisis}d)"
+        
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Address": None, # Ocultamos la dirección técnica
+                "TVL": st.column_config.NumberColumn(format="$%d"),
+                col_apr: st.column_config.NumberColumn(format="%.2f%%"),
+                "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
+                "Riesgo IL": st.column_config.NumberColumn(format="%.1f%%"),
+                "Margen": st.column_config.NumberColumn(format="%.1f%%")
+            }
+        )
+        
+        st.markdown("---")
+        st.subheader("🧪 Pasar al Laboratorio")
+        
+        col_sel, col_btn = st.columns([3, 1])
+        
+        with col_sel:
+            # Selector para elegir qué pool analizar
+            opciones = df['Par'].tolist()
+            seleccion = st.selectbox("Selecciona un pool para hacer Backtesting:", opciones)
+        
+        with col_btn:
+            # Espaciado para alinear botón
+            st.write("") 
+            st.write("") 
+            if st.button("Analizar Pool ➡️"):
+                # Extraemos la fila completa del DF
+                if seleccion:
+                    row = df[df['Par'] == seleccion].iloc[0]
+                    go_to_lab(row)
+                    st.rerun()
+
+    elif st.session_state.scan_results is not None and st.session_state.scan_results.empty:
+        st.info("No hay resultados para mostrar.")
     else:
         st.info("👈 Configura los filtros y pulsa 'Escanear Mercado'.")
 
