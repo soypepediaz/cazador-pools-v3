@@ -22,31 +22,28 @@ class Backtester:
         # --- 1. Inicialización (Día 0) ---
         start_point = sim_data[0]
         
-        # Precio del Activo Base en USD (ej. Precio cbBTC en USD)
         p_base_usd_0 = start_point.get('priceUsd', 0)
-        
-        # Precio Nativo (Relación Base/Quote, ej. cbBTC/SOL)
         p_native_0 = start_point.get('priceNative')
         
         if not p_base_usd_0 or not p_native_0: return None
 
-        # Derivamos el precio del Activo Quote en USD (ej. Precio SOL en USD)
-        # Matemáticamente: P_quote_usd = P_base_usd / Ratio_base_quote
         p_quote_usd_0 = p_base_usd_0 / p_native_0
 
         # Definimos Rango
         lower_price = p_native_0 * (1 - range_width_std)
         upper_price = p_native_0 * (1 + range_width_std)
         
+        # --- NUEVO: Calcular Eficiencia de Capital ---
+        # range_width_std actúa aquí como el porcentaje de desviación (ej 0.20)
+        efficiency_multiplier = self.math.calculate_concentration_multiplier(range_width_std)
+        
         # --- CÁLCULO DE LIQUIDEZ REAL (L) ---
-        # Calculamos cuántos tokens X e Y compramos inicialmente con la inversión
         sqrt_p = math.sqrt(p_native_0)
         sqrt_a = math.sqrt(lower_price)
         sqrt_b = math.sqrt(upper_price)
         
-        # Unidades de token por unidad de Liquidez (L=1)
-        amount_x_unit = 0 # Base
-        amount_y_unit = 0 # Quote
+        amount_x_unit = 0 
+        amount_y_unit = 0 
         
         if p_native_0 <= lower_price:
             amount_x_unit = (sqrt_b - sqrt_a) / (sqrt_a * sqrt_b)
@@ -56,15 +53,12 @@ class Backtester:
             amount_x_unit = (sqrt_b - sqrt_p) / (sqrt_p * sqrt_b)
             amount_y_unit = sqrt_p - sqrt_a
             
-        # Costo en USD de comprar esa unidad de Liquidez
         cost_unit_l_usd = (amount_x_unit * p_base_usd_0) + (amount_y_unit * p_quote_usd_0)
         
         if cost_unit_l_usd == 0: return None
         
-        # Liquidez total que podemos comprar
         liquidity = investment_usd / cost_unit_l_usd
         
-        # Tokens iniciales (para comparar con HODL)
         initial_hold_x = amount_x_unit * liquidity
         initial_hold_y = amount_y_unit * liquidity
 
@@ -73,46 +67,43 @@ class Backtester:
         
         # --- 2. Simulación Paso a Paso ---
         for snap in sim_data:
-            # Datos actuales
             p_native_t = snap.get('priceNative', 0)
             p_base_usd_t = snap.get('priceUsd', 0)
             
             if p_native_t == 0 or p_base_usd_t == 0: continue
             
-            # Precio Quote actual en USD
             p_quote_usd_t = p_base_usd_t / p_native_t
             
-            # A. Valor HODL (Si hubiéramos guardado los tokens en la billetera)
-            # Simplemente valoramos los tokens iniciales a precios de hoy
+            # A. Valor HODL
             val_hodl_now = (initial_hold_x * p_base_usd_t) + (initial_hold_y * p_quote_usd_t)
             
             # B. Valor Posición V3 (Mark-to-Market)
-            # Calculamos qué tokens tenemos DENTRO del pool ahora mismo según el rango
             curr_x = 0
             curr_y = 0
             sqrt_p_t = math.sqrt(p_native_t)
             in_range = lower_price <= p_native_t <= upper_price
             
             if p_native_t <= lower_price:
-                # Precio bajó mucho -> Tenemos 100% Base (X)
                 curr_x = (sqrt_b - sqrt_a) / (sqrt_a * sqrt_b) * liquidity
             elif p_native_t >= upper_price:
-                # Precio subió mucho -> Tenemos 100% Quote (Y)
                 curr_y = (sqrt_b - sqrt_a) * liquidity
             else:
-                # En rango -> Mezcla
                 curr_x = (sqrt_b - sqrt_p_t) / (sqrt_p_t * sqrt_b) * liquidity
                 curr_y = (sqrt_p_t - sqrt_a) * liquidity
                 
-            # Valor actual de los tokens en el pool en USD
             val_pos_usd = (curr_x * p_base_usd_t) + (curr_y * p_quote_usd_t)
             
-            # C. Fees
+            # C. Fees (Con Eficiencia de Capital)
             apr_snapshot = snap.get('apr', 0)
             if in_range and apr_snapshot:
-                # El APR se aplica sobre el valor actual de la posición en ese momento
-                period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
-                fees_usd = val_pos_usd * period_yield
+                # 1. Yield Base del periodo (APR API / Periodos Anuales)
+                base_period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
+                
+                # 2. Yield Real = Base * Multiplicador de Concentración
+                # Si concentras liquidez, capturas N veces más fees con el mismo capital
+                real_period_yield = base_period_yield * efficiency_multiplier
+                
+                fees_usd = val_pos_usd * real_period_yield
                 accumulated_fees_usd += fees_usd
             
             formatted_date = self._parse_date(snap.get('date'))
@@ -127,4 +118,9 @@ class Backtester:
                 "HODL Value": val_hodl_now
             })
             
-        return pd.DataFrame(results), lower_price, upper_price
+        # Devolvemos también el multiplicador usado para mostrarlo en el frontend si quieres
+        metadata = {
+            "efficiency": efficiency_multiplier
+        }
+            
+        return pd.DataFrame(results), lower_price, upper_price, metadata
