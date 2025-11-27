@@ -117,7 +117,7 @@ elif st.session_state.view == 'lab':
     st.title(f"🧪 Laboratorio: {pool['Par']}")
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
+    c1.metric("Protocolo", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     c3.metric("APR Media", f"{pool['APR Media']:.1f}%")
     c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
@@ -130,10 +130,10 @@ elif st.session_state.view == 'lab':
     dias_sim = st.sidebar.slider("Días de Historial a simular", 7, 90, 30)
     
     st.sidebar.subheader("Estrategia")
-    # NUEVO: Selector de Desviaciones Típicas (SD)
+    # Selector de Desviaciones Típicas (SD)
     sd_mult = st.sidebar.slider("Amplitud (Desviaciones Típicas)", 0.1, 3.0, 1.0, step=0.1)
     
-    # NUEVO: Rebalanceo
+    # Rebalanceo
     auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear si sale de rango", value=False)
     if auto_rebalance:
         st.sidebar.caption("⚠️ Se asume un coste de swap del 0.3% en cada rebalanceo.")
@@ -154,14 +154,14 @@ elif st.session_state.view == 'lab':
                 pool_full_data = provider.get_pool_history(address)
                 history_list = pool_full_data.get('history', [])
                 
-                # 2. Estimación de Fee Tier
+                # 2. Estimación de Fee Tier (solo para logging si hace falta, ya no se usa en cálculo directo)
                 fee_estimado = 0.003 
                 if "0.05%" in str(pool['Par']): fee_estimado = 0.0005
                 elif "0.01%" in str(pool['Par']): fee_estimado = 0.0001
                 elif "1%" in str(pool['Par']): fee_estimado = 0.01
                 elif "0.3%" in str(pool['Par']): fee_estimado = 0.003
                 
-                # 3. Ejecutar simulación (NUEVA FIRMA CON 4 RETORNOS)
+                # 3. Ejecutar simulación
                 df_res, min_p, max_p, meta = tester.run_simulation(
                     history_list, 
                     inversion, 
@@ -179,11 +179,11 @@ elif st.session_state.view == 'lab':
                     roi_v3 = (res_final['Valor Total'] - inversion) / inversion
                     roi_hodl = (res_final['HODL Value'] - inversion) / inversion
                     
-                    k1, k2, k3, k4 = st.columns(4)
+                    # Eliminada la 4ª métrica de Eficiencia
+                    k1, k2, k3 = st.columns(3)
                     k1.metric("Valor Final (V3)", f"${res_final['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
                     k2.metric("Valor si HODL", f"${res_final['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
                     k3.metric("Fees Totales", f"${res_final['Fees Acum']:,.2f}")
-                    k4.metric("Eficiencia Capital", f"{meta['efficiency']:.1f}x", help="Multiplicador de APR por concentración")
                     
                     if auto_rebalance:
                         st.info(f"🔄 Se realizaron **{meta['rebalances']} rebalanceos** durante el periodo.")
@@ -214,22 +214,45 @@ elif st.session_state.view == 'lab':
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera de Rango': 'red'})
                     
-                    # Línea de fondo para conectar
+                    # Línea de fondo
                     fig_price.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
                     
-                    # Si no hay rebalanceo, pintamos líneas fijas. Si hay, pintamos las bandas dinámicas.
                     if not auto_rebalance:
                         fig_price.add_hline(y=min_p, line_dash="dash", line_color="red")
                         fig_price.add_hline(y=max_p, line_dash="dash", line_color="green")
                     else:
-                        # Pintamos las bandas dinámicas que cambian con el rebalanceo
                         fig_price.add_traces(px.line(df_res, x='Date', y='Range Min').update_traces(line=dict(color='red', dash='dash')).data[0])
                         fig_price.add_traces(px.line(df_res, x='Date', y='Range Max').update_traces(line=dict(color='green', dash='dash')).data[0])
 
                     st.plotly_chart(fig_price, use_container_width=True)
                     
-                    with st.expander("Ver tabla de datos detallada"):
-                        st.dataframe(df_res)
+                    # --- TABLA DETALLADA MEJORADA ---
+                    with st.expander("Ver tabla de datos detallada", expanded=True):
+                        # Ordenar columnas para que se vean bien
+                        cols_to_show = [
+                            "Date", "Price", "Range Min", "Range Max", "In Range", 
+                            "APR Period", "Fees Period", "Fees Acum", 
+                            "Valor Principal", "Valor Total", "HODL Value"
+                        ]
+                        
+                        st.dataframe(
+                            df_res[cols_to_show],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Date": st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY HH:mm"),
+                                "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
+                                "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
+                                "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
+                                "APR Period": st.column_config.NumberColumn("APR (8h)", format="%.2f%%"), # Nueva columna formateada
+                                "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"), # Nueva columna formateada
+                                "Fees Acum": st.column_config.NumberColumn("Fees Total", format="$%.2f"),
+                                "Valor Principal": st.column_config.NumberColumn("Principal", format="$%.2f"),
+                                "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
+                                "HODL Value": st.column_config.NumberColumn("HODL", format="$%.2f"),
+                                "In Range": st.column_config.CheckboxColumn("En Rango"), # Checkbox limpio en vez de True/False
+                            }
+                        )
                         
                 else:
                     st.error("Datos insuficientes para simular.")
