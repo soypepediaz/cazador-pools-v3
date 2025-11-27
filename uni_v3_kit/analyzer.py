@@ -17,8 +17,6 @@ class MarketScanner:
         # 2. Filtrar básicos (Chain y TVL)
         candidates = []
         for p in raw_pools:
-            # Filtro de Cadena (Si chain_filter es "all", pasamos todo, si no, filtramos)
-            # Nota: Para tu app actual usas un selectbox fijo, así que filtramos normal.
             if p.get('ChainId') == chain_filter:
                 try:
                     tvl = float(p.get('Liquidity', 0))
@@ -34,7 +32,6 @@ class MarketScanner:
         results = []
         
         # Calculamos cuántos datos necesitamos del historial
-        # La API guarda aprox 3 datos por día (cada 8h).
         samples_needed = days_window * 3
         
         # 3. Análisis Profundo de cada candidato
@@ -46,12 +43,10 @@ class MarketScanner:
             history = self.data.get_pool_history(address)
             
             # --- CORTE DE TIEMPO (MEDIA MÓVIL) ---
-            # La API devuelve los datos ordenados del más nuevo al más viejo.
-            # Tomamos solo los necesarios para la ventana de tiempo seleccionada.
             recent_data = history[:samples_needed] if history else []
             
             if not recent_data:
-                continue # Si no hay historia, saltamos
+                continue 
 
             # A. Calcular APR Promedio (SMA)
             aprs = [x.get('apr', 0) for x in recent_data if x.get('apr') is not None]
@@ -83,35 +78,36 @@ class MarketScanner:
             elif margen > 0.05: veredicto = "✅ OK"
             elif margen > 0: veredicto = "⚠️ JUSTO"
             
-            # D. Datos Extra para la Tabla
-            # Formatear Fee Tier (Ej: 3000 -> 0.3%, 100 -> 0.01%)
+            # D. Datos Extra (CORREGIDO: CÁLCULOS NUMÉRICOS)
+            
+            # Corrección Fee Tier: Dividimos por 1.000.000 para obtener el decimal correcto
             try:
                 fee_raw = float(pool.get('feeTier', 0))
-                # La convención suele ser 10000 = 100%? No, en Uniswap v3:
-                # 3000 = 0.3%, 500 = 0.05%, 10000 = 1%. 
-                # Por tanto dividimos por 10000 para tener decimal absoluto, o por 100 para porcentaje visual.
-                fee_formatted = f"{fee_raw / 10000:.2%}" # Esto muestra 0.30%
+                fee_val = fee_raw / 1000000.0 
             except:
-                fee_formatted = "?"
+                fee_val = 0.0
 
-            dex_id = pool.get('DexId', 'Unknown').capitalize()
+            # Limpieza de nombres
+            dex_id = pool.get('DexId', 'Unknown').capitalize().replace("-v3", "").replace(" v3", "")
             chain_id = pool.get('ChainId', 'Unknown').capitalize()
             
-            # E. Construir fila
             base = pool.get('BaseToken', '?')
             quote = pool.get('QuoteToken', '?')
 
+            # E. Construir fila (ENTREGANDO NÚMEROS PUROS PARA ORDENACIÓN)
+            # Nota: No usamos f"{...}%" aquí para no romper la ordenación de la tabla.
+            # El formato visual se encarga 'app.py' con st.column_config.
             results.append({
                 "Par": f"{base}-{quote}",
                 "Red": chain_id,
                 "Protocolo": dex_id,
-                "Fee": fee_formatted,
-                "TVL": f"${float(pool.get('Liquidity',0)):,.0f}",
-                f"APR ({days_window}d)": f"{apr_promedio*100:.1f}%", # Header dinámico
-                f"Volatilidad": f"{vol_real*100:.1f}%",
-                "Costo Riesgo": f"{costo_riesgo*100:.1f}%",
-                "Margen": f"{margen*100:.1f}%",
-                "Veredicto": veredicto
+                "Fee": fee_val,                         # Número float
+                "TVL": float(pool.get('Liquidity',0)),  # Número float
+                f"APR ({days_window}d)": apr_promedio,  # Número float
+                "Volatilidad": vol_real,                # Número float
+                "Costo Riesgo": costo_riesgo,           # Número float
+                "Margen": margen,                       # Número float
+                "Veredicto": veredicto                  # Texto
             })
             
         return pd.DataFrame(results)
