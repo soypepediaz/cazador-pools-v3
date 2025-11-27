@@ -7,13 +7,10 @@ from uni_v3_kit.backtester import Backtester
 
 st.set_page_config(page_title="Cazador V3 Lab", layout="wide")
 
-# --- GESTIÓN DE NAVEGACIÓN (ESTADO) ---
-if 'view' not in st.session_state:
-    st.session_state.view = 'scanner'
-if 'selected_pool' not in st.session_state:
-    st.session_state.selected_pool = None
-if 'scan_results' not in st.session_state:
-    st.session_state.scan_results = None
+# --- GESTIÓN DE NAVEGACIÓN ---
+if 'view' not in st.session_state: st.session_state.view = 'scanner'
+if 'selected_pool' not in st.session_state: st.session_state.selected_pool = None
+if 'scan_results' not in st.session_state: st.session_state.scan_results = None
 
 def go_to_lab(pool_data):
     st.session_state.selected_pool = pool_data
@@ -28,9 +25,7 @@ def go_to_scanner():
 # ==========================================
 if st.session_state.view == 'scanner':
     st.title("🦄 Cazador de Oportunidades Uniswap V3")
-    st.markdown("Encuentra pools rentables y **analízalos a fondo** en el laboratorio.")
-
-    # --- Configuración Sidebar ---
+    
     @st.cache_data(ttl=3600)
     def get_chains_disponibles():
         provider = DataProvider()
@@ -38,44 +33,69 @@ if st.session_state.view == 'scanner':
             pools = provider.get_all_pools()
             chains = {pool.get('ChainId') for pool in pools if pool.get('ChainId')}
             return sorted(list(chains))
-        except:
-            return ["ethereum", "base", "bsc", "arbitrum"]
+        except: return ["ethereum", "base", "bsc", "arbitrum"]
 
-    st.sidebar.header("🎯 Filtros de Escaneo")
+    # --- SIDEBAR ---
+    st.sidebar.header("🔍 Búsqueda Manual")
+    manual_address = st.sidebar.text_input("Dirección del Pool (0x...)", placeholder="Pega el contrato aquí")
+    
+    # Botón exclusivo para búsqueda manual
+    if st.sidebar.button("Analizar Pool Concreto"):
+        if manual_address:
+            scanner = MarketScanner()
+            # Usamos un valor por defecto o el del slider de abajo si ya está cargado
+            # Para simplificar, leemos el slider del estado o usamos 7
+            dias_manual = 7 
+            
+            with st.spinner("Analizando dirección específica..."):
+                try:
+                    # Llamamos a la nueva función que creaste en analyzer.py
+                    df = scanner.analyze_single_pool(manual_address, days_window=dias_manual)
+                    if not df.empty:
+                        st.session_state.scan_results = df
+                        st.success("Pool encontrado y analizado.")
+                    else:
+                        st.error("No se encontraron datos para esa dirección en la API.")
+                except Exception as e:
+                    st.error(f"Error al analizar: {e}")
+        else:
+            st.sidebar.warning("Por favor, introduce una dirección.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("🎯 Escáner General")
     chain = st.sidebar.selectbox("Red", get_chains_disponibles())
     min_tvl = st.sidebar.number_input("Liquidez Mínima ($)", value=50000, step=10000)
     
-    st.sidebar.markdown("---")
-    dias_analisis = st.sidebar.slider("Ventana Media Móvil (Días)", 3, 30, 7)
+    # Este slider afecta tanto al escáner como (opcionalmente) a la búsqueda manual si lo vinculamos
+    dias_analisis = st.sidebar.slider("Media Móvil (Días)", 3, 30, 7)
 
-    # --- Ejecución del Escáner ---
     if st.sidebar.button("🔍 Escanear Mercado"):
         scanner = MarketScanner()
         with st.spinner(f"Analizando {chain}..."):
             try:
-                # Guardamos el resultado en session_state
                 df = scanner.scan(chain, min_tvl, dias_analisis)
                 st.session_state.scan_results = df
-                
-                if df.empty:
-                    st.warning("No se encontraron pools con esos filtros.")
-                else:
-                    st.success(f"Encontrados {len(df)} pools.")
-            except Exception as e:
-                st.error(f"Error en el escaneo: {e}")
+                if df.empty: st.warning("Sin resultados.")
+                else: st.success(f"Encontrados {len(df)} pools.")
+            except Exception as e: st.error(f"Error: {e}")
 
-    # --- Renderizado de Resultados ---
+    # --- RESULTADOS ---
     if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
         df = st.session_state.scan_results
+        
+        # Buscamos dinámicamente la columna de APR porque el nombre cambia según los días
+        # Ejemplo: "APR (7d)" o "APR (30d)"
+        col_apr = [c for c in df.columns if "APR (" in c]
+        col_apr_name = col_apr[0] if col_apr else "APR"
         
         st.dataframe(
             df,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Address": None, # Ocultamos la dirección técnica
+                "Address": None, 
                 "TVL": st.column_config.NumberColumn(format="$%d"),
-                "APR Media": st.column_config.NumberColumn(format="%.1f%%"),
+                col_apr_name: st.column_config.NumberColumn(format="%.1f%%"),
                 "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
                 "Riesgo IL": st.column_config.NumberColumn(format="%.1f%%"),
                 "Margen": st.column_config.NumberColumn(format="%.1f%%")
@@ -85,161 +105,124 @@ if st.session_state.view == 'scanner':
         st.markdown("---")
         st.subheader("🧪 Pasar al Laboratorio")
         
-        col_sel, col_btn = st.columns([3, 1])
-        
-        with col_sel:
-            # MEJORA USABILIDAD: Formato "Par (DEX)" en el desplegable
-            # Usamos un dataframe temporal con índice reseteado para asegurar el mapeo
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            # Selector inteligente con nombre y DEX
             df_display = df.reset_index(drop=True)
-            
             def format_option(idx):
                 row = df_display.iloc[idx]
                 return f"{row['Par']} ({row['DEX']})"
             
             seleccion_idx = st.selectbox(
-                "Selecciona un pool para hacer Backtesting:",
+                "Selecciona un pool:",
                 options=df_display.index,
                 format_func=format_option
             )
-        
-        with col_btn:
-            st.write("") 
-            st.write("") 
+        with c2:
+            st.write("")
+            st.write("")
             if st.button("Analizar Pool ➡️"):
                 if seleccion_idx is not None:
                     row = df_display.iloc[seleccion_idx]
                     go_to_lab(row)
                     st.rerun()
 
-    elif st.session_state.scan_results is not None and st.session_state.scan_results.empty:
-        st.info("No hay resultados para mostrar.")
+    elif st.session_state.scan_results is not None:
+        st.info("No hay resultados.")
     else:
-        st.info("👈 Configura los filtros y pulsa 'Escanear Mercado'.")
+        st.info("Usa la barra lateral para buscar un pool concreto o escanear el mercado.")
 
 # ==========================================
-# VISTA 2: LABORATORIO (BACKTESTING)
+# VISTA 2: LABORATORIO
 # ==========================================
 elif st.session_state.view == 'lab':
     pool = st.session_state.selected_pool
-    
-    st.button("⬅️ Volver al Escáner", on_click=go_to_scanner)
+    st.button("⬅️ Volver", on_click=go_to_scanner)
     
     st.title(f"🧪 Laboratorio: {pool['Par']}")
+    
+    # Buscamos la columna APR dinámicamente también aquí
+    col_apr_lab = [c for c in pool.index if "APR (" in c]
+    val_apr = pool[col_apr_lab[0]] if col_apr_lab else 0
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    c3.metric("APR Media", f"{pool['APR Media']:.1f}%")
+    c3.metric("APR Media", f"{val_apr:.1f}%")
     c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
     
     st.markdown("---")
     
-    # --- Configuración Backtest ---
-    st.sidebar.header("⚙️ Parámetros de Simulación")
-    inversion = st.sidebar.number_input("Inversión Inicial ($)", 1000, 1000000, 10000)
+    # --- Config ---
+    st.sidebar.header("⚙️ Simulación")
+    inversion = st.sidebar.number_input("Inversión ($)", 1000, 1000000, 10000)
     
-    dias_sim = st.sidebar.slider("Días a Simular (Duración)", 7, 180, 30)
-    vol_days = st.sidebar.slider("Ventana Volatilidad (Lookback)", 3, 30, 7, help="Días previos usados para calcular el ancho del rango.")
+    # Sliders del Backtest
+    dias_sim = st.sidebar.slider("Días a Simular", 7, 180, 30)
+    vol_days = st.sidebar.slider("Ventana Volatilidad", 3, 30, 7)
     
     st.sidebar.subheader("Estrategia")
-    sd_mult = st.sidebar.slider("Amplitud (Desviaciones Típicas)", 0.1, 3.0, 1.0, step=0.1)
+    sd_mult = st.sidebar.slider("Amplitud (SD)", 0.1, 3.0, 1.0, step=0.1)
     
     auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear", value=False)
     if auto_rebalance:
-        st.sidebar.caption("⚠️ Se asume un coste de swap del 0.3% en cada rebalanceo.")
+        st.sidebar.caption("⚠️ Coste swap: 0.3%")
     
-    # --- Ejecución ---
-    if st.button("🚀 Ejecutar Simulación Histórica"):
-        
+    if st.button("🚀 Ejecutar Simulación"):
         address = pool.get('Address')
-        
         if not address:
-            st.error("Error: Falta la dirección del contrato. Vuelve a escanear.")
+            st.error("Falta Address.")
         else:
-            with st.spinner("Calculando volatilidad y simulando..."):
+            with st.spinner("Simulando..."):
                 provider = DataProvider()
                 tester = Backtester()
                 
-                # 1. Bajamos la historia COMPLETA
-                pool_full_data = provider.get_pool_history(address)
-                history_list = pool_full_data.get('history', [])
+                history_data = provider.get_pool_history(address).get('history', [])
                 
-                # 2. Estimación de Fee Tier
-                fee_estimado = 0.003 
-                if "0.05%" in str(pool['Par']): fee_estimado = 0.0005
-                elif "0.01%" in str(pool['Par']): fee_estimado = 0.0001
-                elif "1%" in str(pool['Par']): fee_estimado = 0.01
-                elif "0.3%" in str(pool['Par']): fee_estimado = 0.003
+                fee_estimado = 0.003 # Placeholder
                 
-                # 3. Ejecutar simulación
                 df_res, min_p, max_p, meta = tester.run_simulation(
-                    history_list, 
-                    inversion, 
-                    sd_mult, 
-                    sim_days=dias_sim,    
-                    vol_days=vol_days,    
-                    fee_tier=fee_estimado,
-                    auto_rebalance=auto_rebalance
+                    history_data, inversion, sd_mult, 
+                    sim_days=dias_sim, vol_days=vol_days, 
+                    fee_tier=fee_estimado, auto_rebalance=auto_rebalance
                 )
                 
                 if df_res is not None and not df_res.empty:
-                    st.success(f"Simulación completada (Volatilidad inicial: **{meta['initial_volatility']*100:.1f}%**)")
-                    
-                    # --- RESULTADOS ---
-                    res_final = df_res.iloc[-1]
-                    roi_v3 = (res_final['Valor Total'] - inversion) / inversion
-                    roi_hodl = (res_final['HODL Value'] - inversion) / inversion
+                    last = df_res.iloc[-1]
+                    roi_v3 = (last['Valor Total'] - inversion) / inversion
+                    roi_hodl = (last['HODL Value'] - inversion) / inversion
                     
                     k1, k2, k3 = st.columns(3)
-                    k1.metric("Valor Final (V3)", f"${res_final['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
-                    k2.metric("Valor si HODL", f"${res_final['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
-                    k3.metric("Fees Totales", f"${res_final['Fees Acum']:,.2f}")
+                    k1.metric("Valor Final (V3)", f"${last['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
+                    k2.metric("Valor si HODL", f"${last['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
+                    k3.metric("Fees Totales", f"${last['Fees Acum']:,.2f}")
                     
                     if auto_rebalance:
-                        st.info(f"🔄 Se realizaron **{meta['rebalances']} rebalanceos** durante el periodo.")
+                        st.info(f"🔄 **{meta['rebalances']} rebalanceos** realizados.")
 
-                    # Explicación del rango calculado
-                    precio_entrada = df_res.iloc[0]['Price']
-                    # Usamos el ancho inicial guardado en metadata
+                    precio_ini = df_res.iloc[0]['Price']
                     rango_pct = meta['initial_range_width_pct'] * 100
-                    
-                    st.info(f"""
-                    **Configuración:** Simulación de **{dias_sim} días**.  
-                    El rango inicial se calculó usando la volatilidad de los **{vol_days} días previos** al inicio.
-                    Precio entrada: **{precio_entrada:.4f}**. Límites iniciales: **{min_p:.4f}** - **{max_p:.4f}** (±{rango_pct:.1f}%).
-                    """)
+                    st.info(f"**Rango Inicial:** ±{rango_pct:.1f}%. Entrada: **{precio_ini:.4f}**. Límites: **{min_p:.4f}** - **{max_p:.4f}**")
 
-                    # --- GRÁFICOS ---
-                    
-                    # 1. Rendimiento
-                    st.subheader("💰 Rendimiento Acumulado")
+                    # Gráficos
+                    st.subheader("💰 Rendimiento")
                     fig_rend = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                       color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
-                                       labels={"value": "Valor (USD)", "variable": "Estrategia"})
+                                       color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"})
                     st.plotly_chart(fig_rend, use_container_width=True)
                     
-                    # 2. Precio y Rangos
-                    st.subheader("📊 Precio y Estado")
-                    
-                    # Coloreamos puntos según estado
-                    df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera de Rango')
-                    
-                    # Formateamos el ancho para el hover (multiplicado por 100 y con símbolo)
+                    st.subheader("📊 Precio y Rangos")
+                    df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
                     df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
-                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera de Rango': 'red'},
+                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
                                            hover_data={'Ancho Rango': True})
-                    
-                    # Línea de fondo
                     fig_price.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
                     
                     if not auto_rebalance:
-                        # Rango estático
                         fig_price.add_hline(y=min_p, line_dash="dash", line_color="red")
                         fig_price.add_hline(y=max_p, line_dash="dash", line_color="green")
                     else:
-                        # Rango dinámico (Pintamos las bandas que cambian)
                         line_min = px.line(df_res, x='Date', y='Range Min', hover_data={'Ancho Rango': True})
                         line_min.update_traces(line=dict(color='red', dash='dash'))
                         fig_price.add_traces(line_min.data[0])
@@ -250,34 +233,8 @@ elif st.session_state.view == 'lab':
 
                     st.plotly_chart(fig_price, use_container_width=True)
                     
-                    # --- TABLA DETALLADA MEJORADA ---
-                    with st.expander("Ver tabla de datos detallada", expanded=True):
-                        # Ordenar columnas
-                        cols_to_show = [
-                            "Date", "Price", "Range Min", "Range Max", 
-                            "Range Width %", 
-                            "APR Period", "Fees Period", "Fees Acum", 
-                            "Valor Principal", "Valor Total", "HODL Value"
-                        ]
-                        
-                        st.dataframe(
-                            df_res[cols_to_show],
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "Date": st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY HH:mm"),
-                                "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
-                                "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
-                                "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
-                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.1f%%"),
-                                "APR Period": st.column_config.NumberColumn("APR (8h)", format="%.2f%%"),
-                                "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"),
-                                "Fees Acum": st.column_config.NumberColumn("Fees Total", format="$%.2f"),
-                                "Valor Principal": st.column_config.NumberColumn("Principal", format="$%.2f"),
-                                "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
-                                "HODL Value": st.column_config.NumberColumn("HODL", format="$%.2f"),
-                            }
-                        )
-                        
+                    with st.expander("Ver detalle"):
+                        cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
+                        st.dataframe(df_res[cols])
                 else:
-                    st.error("Datos insuficientes. Prueba a reducir los días de simulación o la ventana de volatilidad.")
+                    st.error("Datos insuficientes.")
