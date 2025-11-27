@@ -12,7 +12,6 @@ if 'view' not in st.session_state:
     st.session_state.view = 'scanner'
 if 'selected_pool' not in st.session_state:
     st.session_state.selected_pool = None
-# Persistencia de resultados para evitar recargas
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 
@@ -69,7 +68,6 @@ if st.session_state.view == 'scanner':
     if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
         df = st.session_state.scan_results
         
-        # 1. Mostrar Tabla Resumen
         st.dataframe(
             df,
             use_container_width=True,
@@ -90,7 +88,6 @@ if st.session_state.view == 'scanner':
         col_sel, col_btn = st.columns([3, 1])
         
         with col_sel:
-            # Selector para elegir qué pool analizar
             opciones = df['Par'].tolist()
             seleccion = st.selectbox("Selecciona un pool para hacer Backtesting:", opciones)
         
@@ -99,7 +96,6 @@ if st.session_state.view == 'scanner':
             st.write("") 
             if st.button("Analizar Pool ➡️"):
                 if seleccion:
-                    # Extraemos la fila completa del DF
                     row = df[df['Par'] == seleccion].iloc[0]
                     go_to_lab(row)
                     st.rerun()
@@ -115,14 +111,11 @@ if st.session_state.view == 'scanner':
 elif st.session_state.view == 'lab':
     pool = st.session_state.selected_pool
     
-    # Botón Volver
     st.button("⬅️ Volver al Escáner", on_click=go_to_scanner)
     
     st.title(f"🧪 Laboratorio: {pool['Par']}")
     
-    # Métricas clave del pool seleccionado
     c1, c2, c3, c4 = st.columns(4)
-    # CORRECCIÓN AQUÍ: Usamos 'DEX' en vez de 'Protocolo'
     c1.metric("Protocolo", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     c3.metric("APR Media", f"{pool['APR Media']:.1f}%")
@@ -132,43 +125,39 @@ elif st.session_state.view == 'lab':
     
     # --- Configuración Backtest ---
     st.sidebar.header("⚙️ Parámetros de Simulación")
-    
     inversion = st.sidebar.number_input("Inversión Inicial ($)", 1000, 1000000, 10000)
     dias_sim = st.sidebar.slider("Días de Historial a simular", 7, 90, 30)
     
     st.sidebar.subheader("Estrategia de Rango")
-    st.sidebar.markdown("""
-    Define cuánto te alejas del precio actual.
-    * **Estrecho (±5-10%):** Más fees, alto riesgo de salir de rango.
-    * **Amplio (±20-50%):** Menos fees, posición más pasiva.
-    """)
+    st.sidebar.markdown("Definir rango ±% sobre el precio inicial.")
     rango_width = st.sidebar.slider("Amplitud del Rango (±%)", 5, 100, 20) / 100.0
     
     # --- Ejecución ---
     if st.button("🚀 Ejecutar Simulación Histórica"):
         
-        # Recuperamos la dirección del pool (Address)
         address = pool.get('Address')
         
         if not address:
-            st.error("Error: No se encontró la dirección del contrato. Asegúrate de actualizar analyzer.py.")
+            st.error("Error: Falta la dirección del contrato. Vuelve a escanear.")
         else:
-            with st.spinner("Viajando al pasado y simulando rendimientos..."):
+            with st.spinner("Simulando estrategia..."):
                 provider = DataProvider()
                 tester = Backtester()
                 
-                # 1. Bajamos la historia completa
-                history = provider.get_pool_history(address)
+                # CORRECCIÓN CRÍTICA: Extraemos SOLO la lista 'history' del objeto pool
+                pool_full_data = provider.get_pool_history(address)
+                history_list = pool_full_data.get('history', [])
                 
-                # 2. Corremos la simulación
-                # Estimación de Fee Tier basada en el nombre
+                # Estimación de Fee Tier
                 fee_estimado = 0.003 
                 if "0.05%" in str(pool['Par']): fee_estimado = 0.0005
                 elif "0.01%" in str(pool['Par']): fee_estimado = 0.0001
                 elif "1%" in str(pool['Par']): fee_estimado = 0.01
+                elif "0.3%" in str(pool['Par']): fee_estimado = 0.003
                 
+                # Pasamos la lista limpia al simulador
                 df_res, min_p, max_p = tester.run_simulation(
-                    history, 
+                    history_list, 
                     inversion, 
                     rango_width, 
                     days=dias_sim, 
@@ -176,9 +165,9 @@ elif st.session_state.view == 'lab':
                 )
                 
                 if df_res is not None and not df_res.empty:
-                    st.success("Simulación finalizada con éxito.")
+                    st.success("Simulación completada.")
                     
-                    # --- RESULTADOS ---
+                    # Resultados
                     res_final = df_res.iloc[-1]
                     roi_v3 = (res_final['Valor Total'] - inversion) / inversion
                     roi_hodl = (res_final['HODL Value'] - inversion) / inversion
@@ -188,26 +177,20 @@ elif st.session_state.view == 'lab':
                     k2.metric("Valor si HODL", f"${res_final['HODL Value']:,.2f}", delta=f"{roi_hodl*100:.2f}%")
                     k3.metric("Fees Ganadas", f"${res_final['Fees Acum']:,.2f}")
                     
-                    # --- GRÁFICOS ---
-                    st.subheader("Evolución del Portafolio")
-                    
-                    # Gráfico comparativo V3 vs HODL
+                    # Gráficos
+                    st.subheader("Rendimiento: Estrategia vs HODL")
                     fig = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                  title="Rendimiento: Estrategia V3 vs HODL",
-                                  labels={"value": "Valor en USD", "variable": "Estrategia"})
+                                  labels={"value": "Valor (USD)", "variable": "Estrategia"})
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Gráfico de Precio y Rangos
-                    st.subheader("Precio vs Rango Seleccionado")
+                    st.subheader("Precio y Rango")
                     fig2 = px.line(df_res, x='Date', y='Price', title="Precio del Activo")
-                    # Añadimos líneas de rango
-                    fig2.add_hline(y=min_p, line_dash="dash", line_color="red", annotation_text="Límite Inferior")
-                    fig2.add_hline(y=max_p, line_dash="dash", line_color="green", annotation_text="Límite Superior")
+                    fig2.add_hline(y=min_p, line_dash="dash", line_color="red", annotation_text="Min")
+                    fig2.add_hline(y=max_p, line_dash="dash", line_color="green", annotation_text="Max")
                     st.plotly_chart(fig2, use_container_width=True)
                     
-                    # Tabla detalle
                     with st.expander("Ver datos día a día"):
                         st.dataframe(df_res)
                         
                 else:
-                    st.error("No hay suficientes datos históricos para simular este periodo.")
+                    st.error("No hay suficientes datos históricos para este pool.")
