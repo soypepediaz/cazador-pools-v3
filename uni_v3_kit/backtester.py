@@ -59,8 +59,6 @@ class Backtester:
         range_width_pct = vol_annual * time_scaling * sd_multiplier
         range_width_pct = max(0.01, min(range_width_pct, 2.0))
         
-        # NOTA: Hemos eliminado el cálculo de 'efficiency_mult' aquí.
-
         # --- 2. Inicialización (Día 0) ---
         start_point = sim_data[0]
         p_base_usd_0 = start_point.get('priceUsd', 0)
@@ -126,7 +124,7 @@ class Backtester:
             fees_earned_period = 0.0
             
             if in_range and apr_snapshot:
-                # Lógica simplificada: Usamos el APR base del pool sin multiplicador de concentración.
+                # Lógica simplificada: Usamos el APR base del pool
                 # Asumimos que el APR reportado es el que obtenemos si estamos en rango.
                 base_period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
                 fees_earned_period = val_pos_usd * base_period_yield
@@ -141,8 +139,8 @@ class Backtester:
                 "Range Min": lower_price,
                 "Range Max": upper_price,
                 "In Range": in_range,
-                "APR Period": float(apr_snapshot) if apr_snapshot else 0.0, # NUEVO
-                "Fees Period": fees_earned_period,                          # NUEVO
+                "APR Period": float(apr_snapshot) if apr_snapshot else 0.0, # <-- AÑADIDO (Faltaba)
+                "Fees Period": fees_earned_period,                          # <-- AÑADIDO (Faltaba)
                 "Fees Acum": accumulated_fees_usd,
                 "Valor Principal": val_pos_usd,
                 "Valor Total": val_pos_usd + accumulated_fees_usd,
