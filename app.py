@@ -88,16 +88,26 @@ if st.session_state.view == 'scanner':
         col_sel, col_btn = st.columns([3, 1])
         
         with col_sel:
-            opciones = df['Par'].tolist()
-            seleccion = st.selectbox("Selecciona un pool para hacer Backtesting:", opciones)
+            # MEJORA USABILIDAD: Formato "Par (DEX)" en el desplegable
+            # Usamos un dataframe temporal con índice reseteado para asegurar el mapeo
+            df_display = df.reset_index(drop=True)
+            
+            def format_option(idx):
+                row = df_display.iloc[idx]
+                return f"{row['Par']} ({row['DEX']})"
+            
+            seleccion_idx = st.selectbox(
+                "Selecciona un pool para hacer Backtesting:",
+                options=df_display.index,
+                format_func=format_option
+            )
         
         with col_btn:
             st.write("") 
             st.write("") 
             if st.button("Analizar Pool ➡️"):
-                if seleccion:
-                    # Extraemos la fila completa del DF
-                    row = df[df['Par'] == seleccion].iloc[0]
+                if seleccion_idx is not None:
+                    row = df_display.iloc[seleccion_idx]
                     go_to_lab(row)
                     st.rerun()
 
@@ -150,7 +160,7 @@ elif st.session_state.view == 'lab':
                 provider = DataProvider()
                 tester = Backtester()
                 
-                # 1. Bajamos la historia completa
+                # 1. Bajamos la historia COMPLETA
                 pool_full_data = provider.get_pool_history(address)
                 history_list = pool_full_data.get('history', [])
                 
@@ -190,7 +200,7 @@ elif st.session_state.view == 'lab':
 
                     # Explicación del rango calculado
                     precio_entrada = df_res.iloc[0]['Price']
-                    # Usamos el ancho inicial guardado en metadata para mostrar la configuración de partida
+                    # Usamos el ancho inicial guardado en metadata
                     rango_pct = meta['initial_range_width_pct'] * 100
                     
                     st.info(f"""
@@ -214,8 +224,8 @@ elif st.session_state.view == 'lab':
                     # Coloreamos puntos según estado
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera de Rango')
                     
-                    # Creamos columna formateada para el hover
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%")
+                    # Formateamos el ancho para el hover (multiplicado por 100 y con símbolo)
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera de Rango': 'red'},
@@ -245,7 +255,7 @@ elif st.session_state.view == 'lab':
                         # Ordenar columnas
                         cols_to_show = [
                             "Date", "Price", "Range Min", "Range Max", 
-                            "Range Width %", # Nueva columna
+                            "Range Width %", 
                             "APR Period", "Fees Period", "Fees Acum", 
                             "Valor Principal", "Valor Total", "HODL Value"
                         ]
