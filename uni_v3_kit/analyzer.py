@@ -106,8 +106,9 @@ class MarketScanner:
             # Enviamos números en escala 0-100 (ej: 50.5)
             results.append({
                 "Par": nombre_par,
+                "Address": address,                     # <--- AÑADIDO: Vital para backtesting
                 "Red": chain_id,
-                "DEX": dex_id,
+                "DEX": dex_id,                          # <--- RENOMBRADO: Coincide con app.py
                 "TVL": float(pool.get('Liquidity',0)),
                 "APR Media": apr_promedio,
                 "Volatilidad": vol_percent,
