@@ -16,11 +16,10 @@ class DataProvider:
                 "end_timestamp": int(time.time()*1000)
             }
             data = requests.get(url, params=params).json()
-            # El índice viene en base 100 (ej 55.4), lo pasamos a decimal 0.554
             return data['result']['data'][-1][4] / 100.0
         except Exception as e:
             print(f"Error Deribit: {e}")
-            return 0.55 # Valor por defecto conservador (55%)
+            return 0.55 
 
     def get_all_pools(self):
         """API 1: Listado general"""
@@ -32,14 +31,15 @@ class DataProvider:
             return []
 
     def get_pool_history(self, pool_address):
-        """API 2: Historia detallada"""
+        """API 2: Devuelve el OBJETO COMPLETO del pool (info + history)"""
         endpoint = f"{self.base_url}/pool/history"
         params = {"id": pool_address}
         try:
             response = requests.get(endpoint, params=params, headers=self.headers)
             data = response.json()
-            if "pool" in data and "history" in data["pool"]:
-                return data["pool"]["history"]
-            return []
+            # Devolvemos todo el objeto 'pool', no solo 'history', para acceder a poolName
+            if "pool" in data and data["pool"]:
+                return data["pool"]
+            return {}
         except:
-            return []
+            return {}
