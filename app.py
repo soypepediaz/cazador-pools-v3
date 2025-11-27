@@ -56,8 +56,50 @@ if st.sidebar.button("🔍 Escanear Mercado"):
             if not df.empty:
                 st.success(f"¡Análisis completado! Encontrados {len(df)} pools.")
                 
-                # Mostramos la tabla con las nuevas columnas
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                # Nombre dinámico de la columna APR
+                col_apr_name = f"APR ({dias_analisis}d)"
+
+                # --- CONFIGURACIÓN VISUAL Y ORDENACIÓN ---
+                # Aquí decimos: "Aunque sea un número, muéstralo con %"
+                column_config = {
+                    "Par": st.column_config.TextColumn("Par", width="medium"),
+                    "Red": st.column_config.TextColumn("Red"),
+                    "Protocolo": st.column_config.TextColumn("DEX"),
+                    "Fee": st.column_config.NumberColumn(
+                        "Fee",
+                        format="%.2f%%",   # Formato porcentaje con 2 decimales (0.05%)
+                        help="Comisión del pool"
+                    ),
+                    "TVL": st.column_config.NumberColumn(
+                        "TVL",
+                        format="$%d",      # Formato moneda sin decimales
+                    ),
+                    col_apr_name: st.column_config.NumberColumn(
+                        "APR Media",
+                        format="%.1f%%"    # Porcentaje 1 decimal
+                    ),
+                    "Volatilidad": st.column_config.NumberColumn(
+                        "Volatilidad",
+                        format="%.1f%%"
+                    ),
+                    "Costo Riesgo": st.column_config.NumberColumn(
+                        "Riesgo IL",
+                        format="%.1f%%"
+                    ),
+                    "Margen": st.column_config.NumberColumn(
+                        "Margen",
+                        format="%.1f%%"
+                    ),
+                    "Veredicto": st.column_config.TextColumn("Veredicto")
+                }
+                
+                # Mostramos la tabla con la configuración aplicada
+                st.dataframe(
+                    df, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config=column_config
+                )
                 
                 st.markdown(f"""
                 **Detalles del reporte:**
