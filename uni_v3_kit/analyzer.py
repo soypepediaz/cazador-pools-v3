@@ -27,7 +27,7 @@ class MarketScanner:
                     candidates.append(p)
         
         # Si hay demasiados, cortamos a los 20 con más volumen para no saturar
-        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:20]
+        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:30]
         
         results = []
         
@@ -83,7 +83,7 @@ class MarketScanner:
             # Corrección Fee Tier: Dividimos por 1.000.000 para obtener el decimal correcto
             try:
                 fee_raw = float(pool.get('feeTier', 0))
-                fee_val = fee_raw / 1000000.0 
+                fee_val = fee_raw / 10000.0 
             except:
                 fee_val = 0.0
 
