@@ -35,7 +35,6 @@ class Backtester:
             amount_x_unit = (sqrt_b - sqrt_p) / (sqrt_p * sqrt_b)
             amount_y_unit = sqrt_p - sqrt_a
             
-        # Costo de esa unidad de L
         cost_unit_usd = (amount_x_unit * p_base_usd) + (amount_y_unit * p_quote_usd)
         
         if cost_unit_usd == 0: return 0, 0, 0
@@ -82,6 +81,17 @@ class Backtester:
         # A. Calcular Rango Inicial
         range_width_pct, initial_vol = self._calculate_dynamic_range(full_history_chrono, sim_start_idx, vol_days, sd_multiplier)
         
+        # --- CÁLCULO DE EFICIENCIA (TU FÓRMULA) ---
+        # Amplitud Total = range_width_pct * 2 (ej: ±5.5% -> 11% total)
+        full_amplitude = range_width_pct * 2
+        if full_amplitude > 0:
+            efficiency_mult = 1 / full_amplitude
+        else:
+            efficiency_mult = 1.0
+        
+        # Cap de seguridad (ej: no más de 100x)
+        efficiency_mult = min(efficiency_mult, 100.0)
+
         lower_price = p_native_0 * (1 - range_width_pct)
         upper_price = p_native_0 * (1 + range_width_pct)
         
@@ -124,7 +134,12 @@ class Backtester:
                 
                 # 3. Recalcular Rango Dinámico
                 new_width_pct, _ = self._calculate_dynamic_range(full_history_chrono, i, vol_days, sd_multiplier)
-                range_width_pct = new_width_pct # Actualizamos la variable global del bucle
+                range_width_pct = new_width_pct 
+                
+                # Recalcular eficiencia con el nuevo ancho
+                full_amplitude = range_width_pct * 2
+                efficiency_mult = 1 / full_amplitude if full_amplitude > 0 else 1.0
+                efficiency_mult = min(efficiency_mult, 100.0)
 
                 lower_price = p_native_t * (1 - range_width_pct)
                 upper_price = p_native_t * (1 + range_width_pct)
@@ -142,14 +157,18 @@ class Backtester:
             )
             val_pos_usd = (curr_x * p_base_usd_t) + (curr_y * p_quote_usd_t)
             
-            # --- C. Fees (Directo API) ---
+            # --- C. Fees (Con Multiplicador) ---
             apr_snapshot = snap.get('apr', 0)
             fees_earned_period = 0.0
             
             if in_range and apr_snapshot:
-                # APR API / 1095
+                # APR API / 1095 (Base Yield)
                 base_period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
-                fees_earned_period = val_pos_usd * base_period_yield
+                
+                # Aplicamos tu fórmula: Yield Real = Base * E
+                real_period_yield = base_period_yield * efficiency_mult
+                
+                fees_earned_period = val_pos_usd * real_period_yield
                 accumulated_fees_usd += fees_earned_period
             
             # --- D. HODL ---
@@ -160,7 +179,7 @@ class Backtester:
                 "Price": p_native_t,
                 "Range Min": lower_price,
                 "Range Max": upper_price,
-                "Range Width %": range_width_pct * 100, # <-- CORRECCIÓN: Multiplicamos por 100
+                "Range Width %": range_width_pct * 100,
                 "In Range": in_range,
                 "APR Period": float(apr_snapshot) if apr_snapshot else 0.0,
                 "Fees Period": fees_earned_period,
@@ -173,7 +192,8 @@ class Backtester:
         metadata = {
             "initial_volatility": initial_vol,
             "rebalances": rebalance_count,
-            "initial_range_width_pct": range_width_pct 
+            "initial_range_width_pct": range_width_pct,
+            "avg_efficiency": efficiency_mult
         }
             
         return pd.DataFrame(results), initial_min_p, initial_max_p, metadata
