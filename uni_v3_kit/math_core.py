@@ -20,62 +20,72 @@ class V3Math:
     def calculate_il_risk_cost(volatility_annual):
         return (volatility_annual ** 2) / 2
 
-    # --- NUEVO: Cálculo de IL en el límite del rango ---
+    # --- CÁLCULO EXACTO DE IL EN V3 ---
     @staticmethod
     def calculate_v3_il_at_limit(range_width_pct):
         """
-        Calcula el % de Impermanent Loss (vs HODL) justo en el momento 
-        en que el precio toca el límite superior o inferior del rango.
-        
-        Asumimos rango simétrico P * (1 +/- width).
-        En el límite, la posición V3 vale menos que el HODL.
+        Calcula el Impermanent Loss exacto de Uniswap V3 al tocar el límite del rango.
+        Simulamos una posición unitaria para ver la pérdida porcentual.
         """
         try:
-            w = range_width_pct
-            # Relación de precio al llegar al límite superior (o inverso del inferior)
-            # ratio = P_exit / P_entry = 1 + w
-            ratio = 1 + w
-            sqrt_ratio = math.sqrt(ratio)
+            w = max(range_width_pct, 0.001)
             
-            # Valor HODL en el límite (50/50 inicial): 0.5 + 0.5 * ratio
-            val_hodl = 0.5 + (0.5 * ratio)
+            # Definimos escenario normalizado:
+            P_entry = 1.0
+            P_min = 1.0 * (1 - w)
+            P_max = 1.0 * (1 + w)
             
-            # Valor V3 en el límite (Estrategia 100% liquidez en rango):
-            # Fórmula simplificada de IL para rango completo aplicada al ratio
-            # IL_v2 = (2 * sqrt_ratio / (1 + ratio)) - 1
-            # Pero en V3 concentrado, si sales del rango, el IL es la diferencia
-            # entre haber vendido progresivamente vs mantener.
+            # Asumimos que queremos calcular el IL en el peor caso (tocar límite)
+            # Generalmente el IL es simétrico en % si el rango es simétrico geométricamente,
+            # pero aquí usamos rango simétrico aritmético (1 +/- w), así que probamos ambos límites
+            # y devolvemos el peor (mayor pérdida).
             
-            # Usamos la aproximación estándar de IL para un movimiento de precio 'ratio'
-            # IL = 2 * sqrt(ratio) / (1 + ratio) - 1
-            # Nota: Esta fórmula es universal para CPMM (x*y=k) que es lo que rige dentro del rango.
+            il_lower = V3Math._get_il_for_price_move(P_entry, P_min, P_min, P_max)
+            il_upper = V3Math._get_il_for_price_move(P_entry, P_max, P_min, P_max)
             
-            il_decimal = (2 * sqrt_ratio / (1 + ratio)) - 1
-            
-            # Devolvemos el valor absoluto positivo del costo (ej: 0.015 para 1.5% de pérdida)
-            return abs(il_decimal)
+            return max(abs(il_lower), abs(il_upper))
         except:
             return 0.0
 
     @staticmethod
-    def calculate_concentration_multiplier(range_width_pct):
-        try:
-            w = max(range_width_pct, 0.001) 
-            ratio = (1 - w) / (1 + w)
-            multiplier = 1 / (1 - math.sqrt(ratio))
-            return min(multiplier, 100.0)
-        except:
-            return 1.0
-    
-    # ... (Resto de funciones de liquidez para backtester se mantienen igual) ...
+    def _get_il_for_price_move(P0, P1, Pa, Pb):
+        """
+        Calcula IL moviéndose de P0 a P1 dentro de un rango [Pa, Pb].
+        Retorna: (ValorPool - ValorHodl) / ValorHodl
+        """
+        # 1. Calcular Liquidez (L) para una inversión arbitraria (ej. 1000 USD) en P0
+        investment = 1000.0
+        
+        # Calcular cantidades iniciales (x0, y0)
+        L = V3Math.get_liquidity_for_amount(investment, P0, Pa, Pb)
+        if L == 0: return 0.0
+        
+        x0, y0 = V3Math.calculate_amounts(L, math.sqrt(P0), math.sqrt(Pa), math.sqrt(Pb))
+        
+        # 2. Calcular Valor HODL en P1
+        # Si hubiéramos guardado x0 y y0
+        val_hodl = (x0 * P1) + y0
+        
+        # 3. Calcular Valor Pool en P1
+        # Nuevas cantidades x1, y1 en el precio P1
+        x1, y1 = V3Math.calculate_amounts(L, math.sqrt(P1), math.sqrt(Pa), math.sqrt(Pb))
+        val_pool = (x1 * P1) + y1
+        
+        # 4. Impermanent Loss
+        if val_hodl == 0: return 0.0
+        return (val_pool - val_hodl) / val_hodl
+
+    # --- Funciones de Liquidez Estándar ---
     @staticmethod
     def get_liquidity_for_amount(amount_usd, price_current, price_min, price_max):
         if price_current <= price_min or price_current >= price_max: return 0 
         sqrt_p = math.sqrt(price_current)
         sqrt_a = math.sqrt(price_min)
         sqrt_b = math.sqrt(price_max)
+        
         amount_y = sqrt_p - sqrt_a
         amount_x = (1/sqrt_p) - (1/sqrt_b)
+        
         val_unit_l = (amount_x * price_current) + amount_y
         if val_unit_l == 0: return 0
         return amount_usd / val_unit_l
@@ -92,3 +102,13 @@ class V3Math:
             amount_x = liquidity * (sqrt_b - sqrt_p) / (sqrt_p * sqrt_b)
             amount_y = liquidity * (sqrt_p - sqrt_a)
         return amount_x, amount_y
+
+    @staticmethod
+    def calculate_concentration_multiplier(range_width_pct):
+        try:
+            w = max(range_width_pct, 0.001) 
+            ratio = (1 - w) / (1 + w)
+            multiplier = 1 / (1 - math.sqrt(ratio))
+            return min(multiplier, 100.0)
+        except:
+            return 1.0
