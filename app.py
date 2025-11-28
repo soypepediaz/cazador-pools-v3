@@ -38,38 +38,41 @@ if st.session_state.view == 'scanner':
             return sorted(list(chains))
         except: return ["ethereum", "base", "bsc", "arbitrum"]
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR: BÚSQUEDA MANUAL ---
     st.sidebar.header("🔍 Búsqueda Manual")
     manual_address = st.sidebar.text_input("Dirección del Pool (0x...)", placeholder="Pega el contrato aquí")
     
+    # --- SIDEBAR: PARÁMETROS ESTRATEGIA (Comunes) ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Estrategia de Análisis")
+    dias_analisis = st.sidebar.slider("Ventana Análisis (Días)", 3, 30, 7, help="Días para proyectar fees y calcular volatilidad.")
+    sd_mult = st.sidebar.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1, help="Amplitud del rango basada en Desviaciones Típicas.")
+
+    # Botón Búsqueda Manual
     if st.sidebar.button("Analizar Pool Concreto"):
         if manual_address:
             scanner = MarketScanner()
-            dias_manual = 7 
             with st.spinner("Analizando dirección específica..."):
                 try:
-                    df = scanner.analyze_single_pool(manual_address, days_window=dias_manual)
+                    df = scanner.analyze_single_pool(manual_address, days_window=dias_analisis, sd_multiplier=sd_mult)
                     if not df.empty:
                         st.session_state.scan_results = df
-                        st.success("Pool encontrado y analizado.")
-                    else:
-                        st.error("No se encontraron datos para esa dirección en la API.")
-                except Exception as e:
-                    st.error(f"Error al analizar: {e}")
-        else:
-            st.sidebar.warning("Por favor, introduce una dirección.")
+                        st.success("Pool encontrado.")
+                    else: st.error("No se encontraron datos para esa dirección.")
+                except Exception as e: st.error(f"Error: {e}")
+        else: st.sidebar.warning("Introduce una dirección.")
 
+    # --- SIDEBAR: ESCÁNER MASIVO ---
     st.sidebar.markdown("---")
     st.sidebar.header("🎯 Escáner General")
     chain = st.sidebar.selectbox("Red", get_chains_disponibles())
     min_tvl = st.sidebar.number_input("Liquidez Mínima ($)", value=50000, step=10000)
-    dias_analisis = st.sidebar.slider("Media Móvil (Días)", 3, 30, 7)
 
     if st.sidebar.button("🔍 Escanear Mercado"):
         scanner = MarketScanner()
-        with st.spinner(f"Analizando {chain}..."):
+        with st.spinner(f"Escaneando {chain}..."):
             try:
-                df = scanner.scan(chain, min_tvl, dias_analisis)
+                df = scanner.scan(chain, min_tvl, days_window=dias_analisis, sd_multiplier=sd_mult)
                 st.session_state.scan_results = df
                 if df.empty: st.warning("Sin resultados.")
                 else: st.success(f"Encontrados {len(df)} pools.")
@@ -79,9 +82,11 @@ if st.session_state.view == 'scanner':
     if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
         df = st.session_state.scan_results
         
-        col_apr = [c for c in df.columns if "APR (" in c]
-        col_apr_name = col_apr[0] if col_apr else "APR"
+        # Nombre dinámico APR
+        col_apr = [c for c in df.columns if "APR (" in c][0]
         
+        st.info(f"**Criterio de Veredicto:** Se compara si las FEES estimadas en {dias_analisis} días superan el RIESGO DE SALIDA (IL) de un rango de {sd_mult} SD.")
+
         st.dataframe(
             df,
             use_container_width=True,
@@ -89,10 +94,12 @@ if st.session_state.view == 'scanner':
             column_config={
                 "Address": None, 
                 "TVL": st.column_config.NumberColumn(format="$%d"),
-                col_apr_name: st.column_config.NumberColumn(format="%.1f%%"),
+                col_apr: st.column_config.NumberColumn(format="%.1f%%"),
                 "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
-                "Riesgo IL": st.column_config.NumberColumn(format="%.1f%%"),
-                "Margen": st.column_config.NumberColumn(format="%.1f%%")
+                "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
+                "Est. Fees": st.column_config.NumberColumn(f"Fees Est. ({dias_analisis}d)", format="%.2f%%"),
+                "Max IL": st.column_config.NumberColumn("Riesgo Salida", format="%.2f%%"),
+                "Margen": None 
             }
         )
         
@@ -101,19 +108,11 @@ if st.session_state.view == 'scanner':
         
         c1, c2 = st.columns([3, 1])
         with c1:
-            # MEJORA: Selector inteligente con nombre y DEX
             df_display = df.reset_index(drop=True)
-            
             def format_option(idx):
                 row = df_display.iloc[idx]
                 return f"{row['Par']} ({row['DEX']})"
-            
-            seleccion_idx = st.selectbox(
-                "Selecciona un pool para hacer Backtesting:",
-                options=df_display.index,
-                format_func=format_option
-            )
-        
+            seleccion_idx = st.selectbox("Selecciona pool:", options=df_display.index, format_func=format_option)
         with c2:
             st.write("")
             st.write("")
@@ -123,10 +122,8 @@ if st.session_state.view == 'scanner':
                     go_to_lab(row)
                     st.rerun()
 
-    elif st.session_state.scan_results is not None:
-        st.info("No hay resultados.")
-    else:
-        st.info("Usa la barra lateral para buscar un pool concreto o escanear el mercado.")
+    elif st.session_state.scan_results is not None: st.info("No hay resultados.")
+    else: st.info("Usa la barra lateral para buscar.")
 
 # ==========================================
 # VISTA 2: LABORATORIO
@@ -137,6 +134,7 @@ elif st.session_state.view == 'lab':
     
     st.title(f"🧪 Laboratorio: {pool['Par']}")
     
+    # Recuperamos el APR calculado en el escáner si existe, si no 0
     col_apr_lab = [c for c in pool.index if "APR (" in c]
     val_apr = pool[col_apr_lab[0]] if col_apr_lab else 0
     
@@ -159,26 +157,23 @@ elif st.session_state.view == 'lab':
     sd_mult = st.sidebar.slider("Amplitud (SD)", 0.1, 3.0, 1.0, step=0.1)
     
     auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear", value=False)
-    if auto_rebalance:
-        st.sidebar.caption("⚠️ Coste swap: 0.3%")
+    if auto_rebalance: st.sidebar.caption("⚠️ Coste swap: 0.3%")
     
     if st.button("🚀 Ejecutar Simulación"):
         address = pool.get('Address')
-        if not address:
-            st.error("Falta Address.")
+        if not address: st.error("Falta Address.")
         else:
             with st.spinner("Simulando..."):
                 provider = DataProvider()
                 tester = Backtester()
-                
                 history_data = provider.get_pool_history(address).get('history', [])
                 
-                fee_estimado = 0.003 
+                fee_est = 0.003 # Placeholder, backtester usa el real
                 
                 df_res, min_p, max_p, meta = tester.run_simulation(
                     history_data, inversion, sd_mult, 
                     sim_days=dias_sim, vol_days=vol_days, 
-                    fee_tier=fee_estimado, auto_rebalance=auto_rebalance
+                    fee_tier=fee_est, auto_rebalance=auto_rebalance
                 )
                 
                 if df_res is not None and not df_res.empty:
@@ -191,8 +186,7 @@ elif st.session_state.view == 'lab':
                     k2.metric("Valor si HODL", f"${last['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
                     k3.metric("Fees Totales", f"${last['Fees Acum']:,.2f}")
                     
-                    if auto_rebalance:
-                        st.info(f"🔄 **{meta['rebalances']} rebalanceos** realizados.")
+                    if auto_rebalance: st.info(f"🔄 **{meta['rebalances']} rebalanceos** realizados.")
 
                     precio_ini = df_res.iloc[0]['Price']
                     rango_pct = meta['initial_range_width_pct'] * 100
@@ -205,7 +199,7 @@ elif st.session_state.view == 'lab':
                     
                     st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%") # Fix visual del %
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
@@ -229,5 +223,6 @@ elif st.session_state.view == 'lab':
                     with st.expander("Ver detalle"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
                         st.dataframe(df_res[cols])
+                else: st.error("Datos insuficientes.")
                 else:
                     st.error("Datos insuficientes.")
