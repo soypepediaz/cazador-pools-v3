@@ -42,15 +42,14 @@ class MarketScanner:
         range_width_pct = max(0.01, min(range_width_pct, 1.0))
 
         # --- 4. Proyección ---
-        # A. Fees estimadas en el periodo (APR anual * fracción de año)
         period_yield = apr_promedio_anual * (days_window / 365.0)
         
-        # B. Costo IL si tocamos el límite (Exit Risk)
-        # Llamamos a la función CORRECTA de math_core que usa la simulación de V3
+        # IMPORTANTE: Aquí llamamos a la función simulada de V3 en math_core
+        # Esta función devuelve el % de pérdida real (ej 0.013 para 1.3%)
         il_loss_at_limit = self.math.calculate_v3_il_at_limit(range_width_pct)
         
         # --- 5. Veredicto ---
-        # Margen = Lo que gano (Fees) - Lo que pierdo si sale mal (IL)
+        # Margen = Ganancia Esperada - Pérdida Potencial por Salida
         margen = period_yield - il_loss_at_limit
         
         veredicto = "❌ REKT"
@@ -88,12 +87,12 @@ class MarketScanner:
             "DEX": dex_id,
             "TVL": tvl,
             f"APR ({days_window}d)": apr_promedio_anual,
-            "Volatilidad": vol_annual, # Decimal
-            "Rango Est.": range_width_pct, # Decimal
-            "Est. Fees": period_yield, # Decimal
-            "Max IL": il_loss_at_limit, # Decimal (Ahora será correcto y más alto)
+            "Volatilidad": vol_annual * 100.0,
+            "Rango Est.": range_width_pct * 100.0,
+            "Est. Fees": period_yield * 100.0,
+            "Max IL": il_loss_at_limit * 100.0,     
             "Veredicto": veredicto,
-            "Margen": margen # Decimal
+            "Margen": margen * 100.0
         }
 
     def analyze_single_pool(self, address, days_window=7, sd_multiplier=1.0):
