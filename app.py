@@ -210,7 +210,7 @@ elif st.session_state.view == 'lab':
                     
                     st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%")
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
@@ -233,5 +233,24 @@ elif st.session_state.view == 'lab':
                     
                     with st.expander("Ver detalle"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
-                        st.dataframe(df_res[cols])
+                        
+                        # FIX: Usamos formato numérico simple con sufijo para el ancho
+                        st.dataframe(
+                            df_res[cols],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Date": st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY HH:mm"),
+                                "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
+                                "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
+                                "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
+                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.2f %%"), # Formato explícito con símbolo %
+                                "APR Period": st.column_config.NumberColumn("APR (8h)", format="%.2f%%"),
+                                "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"),
+                                "Fees Acum": st.column_config.NumberColumn("Fees Total", format="$%.2f"),
+                                "Valor Principal": st.column_config.NumberColumn("Principal", format="$%.2f"),
+                                "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
+                                "HODL Value": st.column_config.NumberColumn("HODL", format="$%.2f"),
+                            }
+                        )
                 else: st.error("Datos insuficientes.")
