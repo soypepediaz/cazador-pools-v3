@@ -103,7 +103,8 @@ if st.session_state.view == 'scanner':
             column_config={
                 "Address": None, 
                 "TVL": st.column_config.NumberColumn(format="$%d"),
-                col_apr: st.column_config.NumberColumn(format="%.1f%%"),
+                # CORRECCIÓN DE FORMATO: Usamos %.1% para que multiplique por 100 (0.8 -> 80.0%)
+                col_apr: st.column_config.NumberColumn(format="%.1f%%"), 
                 "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
                 "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
                 "Est. Fees": st.column_config.NumberColumn(f"Fees Est. ({dias_analisis}d)", format="%.2f%%"),
@@ -147,8 +148,12 @@ elif st.session_state.view == 'lab':
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    c3.metric("APR Media", f"{pool[col_apr_lab]:.1f}%")
-    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
+    # CORRECCIÓN VISUAL: Multiplicamos por 100 si el valor viene en decimal (0.8)
+    val_apr = pool[col_apr_lab]
+    # Si viene como 0.8, queremos ver 80.0
+    # Si por error ya viniera como 80, esto mostraría 8000. Asumimos que viene decimal.
+    c3.metric("APR Media", f"{val_apr*100:.1f}%") 
+    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%") # Volatilidad ya viene multiplicada por 100 en el analyzer
     
     st.markdown("---")
     
@@ -205,7 +210,7 @@ elif st.session_state.view == 'lab':
                     
                     st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%")
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
