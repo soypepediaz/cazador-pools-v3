@@ -86,10 +86,15 @@ if st.session_state.view == 'scanner':
 
     # --- RESULTADOS ---
     if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
-        df = st.session_state.scan_results
+        # Trabajamos sobre una copia para no alterar los datos originales del estado
+        df_display = st.session_state.scan_results.copy()
         
         # Nombre dinámico APR
-        col_apr = [c for c in df.columns if "APR (" in c][0]
+        col_apr = [c for c in df_display.columns if "APR (" in c][0]
+        
+        # FIX VISUAL: Multiplicamos APR por 100 para que coincida con el formato %.1f%%
+        # (Si el dato es 0.8, ahora será 80.0, y se mostrará como 80.0%)
+        df_display[col_apr] = df_display[col_apr] * 100
         
         # Mensaje explicativo sobre el criterio usado
         st.info(f"""
@@ -97,13 +102,12 @@ if st.session_state.view == 'scanner':
         """)
 
         st.dataframe(
-            df,
+            df_display,
             use_container_width=True,
             hide_index=True,
             column_config={
                 "Address": None, 
                 "TVL": st.column_config.NumberColumn(format="$%d"),
-                # CORRECCIÓN DE FORMATO: Usamos %.1% para que multiplique por 100 (0.8 -> 80.0%)
                 col_apr: st.column_config.NumberColumn(format="%.1f%%"), 
                 "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
                 "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
@@ -118,17 +122,25 @@ if st.session_state.view == 'scanner':
         
         c1, c2 = st.columns([3, 1])
         with c1:
-            df_display = df.reset_index(drop=True)
+            # Selector inteligente con nombre y DEX
+            # Usamos el dataframe original (sin multiplicar) para mantener consistencia interna si hiciera falta
+            # pero para el display usamos el índice que es el mismo.
             def format_option(idx):
-                row = df_display.iloc[idx]
+                row = st.session_state.scan_results.iloc[idx]
                 return f"{row['Par']} ({row['DEX']})"
-            seleccion_idx = st.selectbox("Selecciona pool:", options=df_display.index, format_func=format_option)
+            
+            seleccion_idx = st.selectbox(
+                "Selecciona un pool para hacer Backtesting:",
+                options=st.session_state.scan_results.index,
+                format_func=format_option
+            )
+        
         with c2:
-            st.write("")
-            st.write("")
+            st.write("") 
+            st.write("") 
             if st.button("Analizar Pool ➡️"):
                 if seleccion_idx is not None:
-                    row = df_display.iloc[seleccion_idx]
+                    row = st.session_state.scan_results.iloc[seleccion_idx]
                     go_to_lab(row)
                     st.rerun()
 
@@ -150,10 +162,8 @@ elif st.session_state.view == 'lab':
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     # CORRECCIÓN VISUAL: Multiplicamos por 100 si el valor viene en decimal (0.8)
     val_apr = pool[col_apr_lab]
-    # Si viene como 0.8, queremos ver 80.0
-    # Si por error ya viniera como 80, esto mostraría 8000. Asumimos que viene decimal.
     c3.metric("APR Media", f"{val_apr*100:.1f}%") 
-    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%") # Volatilidad ya viene multiplicada por 100 en el analyzer
+    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%") 
     
     st.markdown("---")
     
@@ -234,7 +244,6 @@ elif st.session_state.view == 'lab':
                     with st.expander("Ver detalle"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
                         
-                        # FIX: Usamos formato numérico simple con sufijo para el ancho
                         st.dataframe(
                             df_res[cols],
                             use_container_width=True,
@@ -244,7 +253,7 @@ elif st.session_state.view == 'lab':
                                 "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
                                 "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
                                 "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
-                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.2f %%"), # Formato explícito con símbolo %
+                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.2f %%"),
                                 "APR Period": st.column_config.NumberColumn("APR (8h)", format="%.2f%%"),
                                 "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"),
                                 "Fees Acum": st.column_config.NumberColumn("Fees Total", format="$%.2f"),
