@@ -35,6 +35,7 @@ class Backtester:
             amount_x_unit = (sqrt_b - sqrt_p) / (sqrt_p * sqrt_b)
             amount_y_unit = sqrt_p - sqrt_a
             
+        # Costo de esa unidad de L
         cost_unit_usd = (amount_x_unit * p_base_usd) + (amount_y_unit * p_quote_usd)
         
         if cost_unit_usd == 0: return 0, 0, 0
@@ -162,10 +163,10 @@ class Backtester:
             fees_earned_period = 0.0
             
             if in_range and apr_snapshot:
-                # APR API / 1095 (Base Yield)
+                # 1. Yield Base (API) / Periodos (1095)
                 base_period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
                 
-                # Aplicamos tu fórmula: Yield Real = Base * E
+                # 2. Aplicar Multiplicador E = 1 / ancho
                 real_period_yield = base_period_yield * efficiency_mult
                 
                 fees_earned_period = val_pos_usd * real_period_yield
@@ -193,7 +194,8 @@ class Backtester:
             "initial_volatility": initial_vol,
             "rebalances": rebalance_count,
             "initial_range_width_pct": range_width_pct,
-            "avg_efficiency": efficiency_mult
+            "avg_efficiency": efficiency_mult # Se pasa al frontend
         }
             
+        # Retorno de 4 valores (DataFrame, Min, Max, Meta)
         return pd.DataFrame(results), initial_min_p, initial_max_p, metadata
