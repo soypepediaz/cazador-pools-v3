@@ -25,80 +25,108 @@ class V3Math:
     def calculate_v3_il_at_limit(range_width_pct):
         """
         Calcula el Impermanent Loss exacto de Uniswap V3 al tocar el límite del rango.
+        Simula una posición de 1000 USD y compara el valor final en el pool vs HODL.
         """
         try:
-            w = max(range_width_pct, 0.001)
+            width = max(range_width_pct, 0.001)
             
-            # Simulamos un movimiento desde P=1 hasta el límite P=(1+w)
+            # 1. Definimos escenario normalizado
             P_entry = 1.0
-            P_limit_up = 1.0 * (1 + w)
             
-            # Definimos el rango centrado en P_entry
-            P_min = 1.0 * (1 - w)
-            P_max = 1.0 * (1 + w)
+            # Rango simétrico porcentual: P * (1 +/- width)
+            P_min = P_entry * (1 - width)
+            P_max = P_entry * (1 + width)
             
-            # Calculamos la pérdida al tocar el límite superior (es simétrico al inferior en %)
-            il = V3Math._get_il_for_price_move(P_entry, P_limit_up, P_min, P_max)
+            # 2. Inversión teórica de 1000 USD para simular
+            investment = 1000.0
             
-            return abs(il)
-        except:
+            # 3. Calcular Liquidez (L) y Tokens Iniciales (HODL Stack) al entrar
+            # Usamos las fórmulas de V3 para obtener x0 (Base) e y0 (Quote)
+            L = V3Math.get_liquidity_for_amount(investment, P_entry, P_min, P_max)
+            
+            if L == 0: return 0.0
+            
+            # Tokens iniciales que compramos (x0=Base, y0=Quote)
+            x0, y0 = V3Math.calculate_amounts(L, math.sqrt(P_entry), math.sqrt(P_min), math.sqrt(P_max))
+            
+            # --- ESCENARIO A: El precio baja hasta P_min (Límite Inferior) ---
+            # En P_min, el pool se llena de Token Base (x). y = 0.
+            
+            # Valor HODL en P_min (nuestros tokens originales valorados a precio bajo)
+            val_hodl_min = (x0 * P_min) + y0
+            
+            # Valor POOL en P_min
+            # Calculamos qué tokens tenemos realmente en el pool a precio P_min
+            # (Todo X, nada Y)
+            x_min, y_min = V3Math.calculate_amounts(L, math.sqrt(P_min), math.sqrt(P_min), math.sqrt(P_max))
+            val_pool_min = (x_min * P_min) + y_min
+            
+            il_min = (val_pool_min - val_hodl_min) / val_hodl_min if val_hodl_min > 0 else 0
+            
+            # --- ESCENARIO B: El precio sube hasta P_max (Límite Superior) ---
+            # En P_max, el pool se llena de Token Quote (y). x = 0.
+            
+            # Valor HODL en P_max
+            val_hodl_max = (x0 * P_max) + y0
+            
+            # Valor POOL en P_max
+            # (Nada X, todo Y)
+            x_max, y_max = V3Math.calculate_amounts(L, math.sqrt(P_max), math.sqrt(P_min), math.sqrt(P_max))
+            val_pool_max = (x_max * P_max) + y_max
+            
+            il_max = (val_pool_max - val_hodl_max) / val_hodl_max if val_hodl_max > 0 else 0
+            
+            # Devolvemos la peor pérdida (máximo IL posible en el rango) en valor absoluto positivo
+            # Nota: IL siempre es negativo, devolvemos el % de pérdida como positivo (ej 0.05 para 5%)
+            return max(abs(il_min), abs(il_max))
+            
+        except Exception as e:
+            print(f"Error calculando IL: {e}")
             return 0.0
 
-    @staticmethod
-    def _get_il_for_price_move(P0, P1, Pa, Pb):
-        """
-        Simula IL moviéndose de P0 a P1 dentro de un rango [Pa, Pb].
-        Retorna: (ValorPool - ValorHodl) / ValorHodl
-        """
-        # 1. Inversión teórica
-        investment = 1000.0
-        
-        # 2. Calcular Liquidez (L) y cantidades iniciales (HODL stack)
-        L = V3Math.get_liquidity_for_amount(investment, P0, Pa, Pb)
-        if L == 0: return 0.0
-        
-        x0, y0 = V3Math.calculate_amounts(L, math.sqrt(P0), math.sqrt(Pa), math.sqrt(Pb))
-        
-        # Valor HODL en P1 (Si no hubiéramos tocado nada)
-        val_hodl = (x0 * P1) + y0
-        
-        # 3. Calcular valor en Pool en P1 (Rebalanceo automático de la curva V3)
-        x1, y1 = V3Math.calculate_amounts(L, math.sqrt(P1), math.sqrt(Pa), math.sqrt(Pb))
-        val_pool = (x1 * P1) + y1
-        
-        # 4. Diferencia porcentual
-        if val_hodl == 0: return 0.0
-        return (val_pool - val_hodl) / val_hodl
-
-    # --- Funciones de Soporte V3 ---
+    # --- Fórmulas Oficiales Uniswap V3 ---
     @staticmethod
     def get_liquidity_for_amount(amount_usd, price_current, price_min, price_max):
+        """Calcula L dado un valor en USD y el rango (Asumiendo P_quote = 1 USD)"""
         if price_current <= price_min or price_current >= price_max: return 0 
+        
         sqrt_p = math.sqrt(price_current)
         sqrt_a = math.sqrt(price_min)
         sqrt_b = math.sqrt(price_max)
         
-        amount_y = sqrt_p - sqrt_a
-        amount_x = (1/sqrt_p) - (1/sqrt_b)
+        # Cantidad de tokens necesarios para 1 unidad de Liquidez (L=1)
+        # Amount X (Base) = (1/sqrtP - 1/sqrtB)
+        amount_x_unit = (1/sqrt_p) - (1/sqrt_b)
         
-        val_unit_l = (amount_x * price_current) + amount_y
-        if val_unit_l == 0: return 0
-        return amount_usd / val_unit_l
+        # Amount Y (Quote) = (sqrtP - sqrtA)
+        amount_y_unit = sqrt_p - sqrt_a
+        
+        # Valor en USD de esa unidad de liquidez
+        # Asumimos price_current es el precio del activo base en USD
+        cost_unit_usd = (amount_x_unit * price_current) + amount_y_unit
+        
+        if cost_unit_usd == 0: return 0
+        
+        return amount_usd / cost_unit_usd
 
     @staticmethod
     def calculate_amounts(liquidity, sqrt_p, sqrt_a, sqrt_b):
-        # Si P <= Pa -> Todo X
+        """Calcula cantidad real de tokens x e y dado L y precios (Raíces)"""
+        # Caso 1: Precio debajo del rango (P <= Pa) -> Todo es Token X (Base)
         if sqrt_p <= sqrt_a:
             amount_x = liquidity * (sqrt_b - sqrt_a) / (sqrt_a * sqrt_b)
             amount_y = 0
-        # Si P >= Pb -> Todo Y
+            
+        # Caso 2: Precio encima del rango (P >= Pb) -> Todo es Token Y (Quote)
         elif sqrt_p >= sqrt_b:
             amount_x = 0
             amount_y = liquidity * (sqrt_b - sqrt_a)
-        # En rango
+            
+        # Caso 3: En rango -> Mezcla
         else:
             amount_x = liquidity * (sqrt_b - sqrt_p) / (sqrt_p * sqrt_b)
             amount_y = liquidity * (sqrt_p - sqrt_a)
+            
         return amount_x, amount_y
 
     @staticmethod
