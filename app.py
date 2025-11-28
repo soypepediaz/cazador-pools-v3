@@ -7,10 +7,13 @@ from uni_v3_kit.backtester import Backtester
 
 st.set_page_config(page_title="Cazador V3 Lab", layout="wide")
 
-# --- GESTIÓN DE NAVEGACIÓN ---
-if 'view' not in st.session_state: st.session_state.view = 'scanner'
-if 'selected_pool' not in st.session_state: st.session_state.selected_pool = None
-if 'scan_results' not in st.session_state: st.session_state.scan_results = None
+# --- GESTIÓN DE NAVEGACIÓN (ESTADO) ---
+if 'view' not in st.session_state:
+    st.session_state.view = 'scanner'
+if 'selected_pool' not in st.session_state:
+    st.session_state.selected_pool = None
+if 'scan_results' not in st.session_state:
+    st.session_state.scan_results = None
 
 def go_to_lab(pool_data):
     st.session_state.selected_pool = pool_data
@@ -39,17 +42,12 @@ if st.session_state.view == 'scanner':
     st.sidebar.header("🔍 Búsqueda Manual")
     manual_address = st.sidebar.text_input("Dirección del Pool (0x...)", placeholder="Pega el contrato aquí")
     
-    # Botón exclusivo para búsqueda manual
     if st.sidebar.button("Analizar Pool Concreto"):
         if manual_address:
             scanner = MarketScanner()
-            # Usamos un valor por defecto o el del slider de abajo si ya está cargado
-            # Para simplificar, leemos el slider del estado o usamos 7
             dias_manual = 7 
-            
             with st.spinner("Analizando dirección específica..."):
                 try:
-                    # Llamamos a la nueva función que creaste en analyzer.py
                     df = scanner.analyze_single_pool(manual_address, days_window=dias_manual)
                     if not df.empty:
                         st.session_state.scan_results = df
@@ -65,8 +63,6 @@ if st.session_state.view == 'scanner':
     st.sidebar.header("🎯 Escáner General")
     chain = st.sidebar.selectbox("Red", get_chains_disponibles())
     min_tvl = st.sidebar.number_input("Liquidez Mínima ($)", value=50000, step=10000)
-    
-    # Este slider afecta tanto al escáner como (opcionalmente) a la búsqueda manual si lo vinculamos
     dias_analisis = st.sidebar.slider("Media Móvil (Días)", 3, 30, 7)
 
     if st.sidebar.button("🔍 Escanear Mercado"):
@@ -83,8 +79,6 @@ if st.session_state.view == 'scanner':
     if st.session_state.scan_results is not None and not st.session_state.scan_results.empty:
         df = st.session_state.scan_results
         
-        # Buscamos dinámicamente la columna de APR porque el nombre cambia según los días
-        # Ejemplo: "APR (7d)" o "APR (30d)"
         col_apr = [c for c in df.columns if "APR (" in c]
         col_apr_name = col_apr[0] if col_apr else "APR"
         
@@ -107,17 +101,19 @@ if st.session_state.view == 'scanner':
         
         c1, c2 = st.columns([3, 1])
         with c1:
-            # Selector inteligente con nombre y DEX
+            # MEJORA: Selector inteligente con nombre y DEX
             df_display = df.reset_index(drop=True)
+            
             def format_option(idx):
                 row = df_display.iloc[idx]
                 return f"{row['Par']} ({row['DEX']})"
             
             seleccion_idx = st.selectbox(
-                "Selecciona un pool:",
+                "Selecciona un pool para hacer Backtesting:",
                 options=df_display.index,
                 format_func=format_option
             )
+        
         with c2:
             st.write("")
             st.write("")
@@ -141,7 +137,6 @@ elif st.session_state.view == 'lab':
     
     st.title(f"🧪 Laboratorio: {pool['Par']}")
     
-    # Buscamos la columna APR dinámicamente también aquí
     col_apr_lab = [c for c in pool.index if "APR (" in c]
     val_apr = pool[col_apr_lab[0]] if col_apr_lab else 0
     
@@ -157,7 +152,6 @@ elif st.session_state.view == 'lab':
     st.sidebar.header("⚙️ Simulación")
     inversion = st.sidebar.number_input("Inversión ($)", 1000, 1000000, 10000)
     
-    # Sliders del Backtest
     dias_sim = st.sidebar.slider("Días a Simular", 7, 180, 30)
     vol_days = st.sidebar.slider("Ventana Volatilidad", 3, 30, 7)
     
@@ -179,7 +173,7 @@ elif st.session_state.view == 'lab':
                 
                 history_data = provider.get_pool_history(address).get('history', [])
                 
-                fee_estimado = 0.003 # Placeholder
+                fee_estimado = 0.003 
                 
                 df_res, min_p, max_p, meta = tester.run_simulation(
                     history_data, inversion, sd_mult, 
@@ -204,7 +198,6 @@ elif st.session_state.view == 'lab':
                     rango_pct = meta['initial_range_width_pct'] * 100
                     st.info(f"**Rango Inicial:** ±{rango_pct:.1f}%. Entrada: **{precio_ini:.4f}**. Límites: **{min_p:.4f}** - **{max_p:.4f}**")
 
-                    # Gráficos
                     st.subheader("💰 Rendimiento")
                     fig_rend = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
                                        color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"})
@@ -212,7 +205,7 @@ elif st.session_state.view == 'lab':
                     
                     st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%") # Fix visual del %
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
