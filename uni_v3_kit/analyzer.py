@@ -63,13 +63,17 @@ class MarketScanner:
         dex_id = str(pool_detail.get('DexId', 'Unknown')).capitalize().replace("-v3", "").replace(" v3", "")
         chain_id = str(pool_detail.get('ChainId', 'Unknown')).capitalize()
         
-        # --- TVL (Corrección Fallback) ---
-        # Si el campo 'Liquidity' en la raíz es 0 o null, lo buscamos en el historial
+        # --- TVL (Corrección Robusta) ---
+        # 1. Intentamos leer de la carátula
         tvl = float(pool_detail.get('Liquidity', 0) or 0)
         
+        # 2. Si es 0, buscamos el primer valor válido en el historial (del más reciente al más antiguo)
         if tvl == 0 and history:
-            # Tomamos la liquidez del snapshot más reciente (el primero de la lista)
-            tvl = float(history[0].get('Liquidity', 0) or 0)
+            for snap in history:
+                snap_liq = float(snap.get('Liquidity', 0) or 0)
+                if snap_liq > 0:
+                    tvl = snap_liq
+                    break # Encontrado, paramos de buscar
 
         return {
             "Par": nombre_par,
