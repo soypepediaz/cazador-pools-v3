@@ -63,17 +63,19 @@ class MarketScanner:
         dex_id = str(pool_detail.get('DexId', 'Unknown')).capitalize().replace("-v3", "").replace(" v3", "")
         chain_id = str(pool_detail.get('ChainId', 'Unknown')).capitalize()
         
-        # Usamos el ID del pool_detail si está disponible, o pasamos None
-        # (El ID suele venir en el propio objeto history o se pasa desde fuera)
-        # Aquí asumimos que pool_detail tiene los datos básicos.
+        # --- TVL (Corrección Fallback) ---
+        # Si el campo 'Liquidity' en la raíz es 0 o null, lo buscamos en el historial
+        tvl = float(pool_detail.get('Liquidity', 0) or 0)
         
+        if tvl == 0 and history:
+            # Tomamos la liquidez del snapshot más reciente (el primero de la lista)
+            tvl = float(history[0].get('Liquidity', 0) or 0)
+
         return {
             "Par": nombre_par,
-            # Address no siempre viene dentro de 'pool_detail' si llamamos a history directo
-            # Lo inyectaremos fuera
             "Red": chain_id,
             "DEX": dex_id,
-            "TVL": float(pool_detail.get('Liquidity',0)),
+            "TVL": tvl,
             f"APR ({days_window}d)": apr_promedio,
             "Volatilidad": vol_percent,
             "Riesgo IL": costo_riesgo_percent,
