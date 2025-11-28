@@ -133,15 +133,12 @@ elif st.session_state.view == 'lab':
     st.button("⬅️ Volver", on_click=go_to_scanner)
     
     st.title(f"🧪 Laboratorio: {pool['Par']}")
-    
-    # Recuperamos el APR calculado en el escáner si existe, si no 0
-    col_apr_lab = [c for c in pool.index if "APR (" in c]
-    val_apr = pool[col_apr_lab[0]] if col_apr_lab else 0
+    col_apr_lab = [c for c in pool.index if "APR (" in c][0]
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    c3.metric("APR Media", f"{val_apr:.1f}%")
+    c3.metric("APR Media", f"{pool[col_apr_lab]:.1f}%")
     c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
     
     st.markdown("---")
@@ -149,13 +146,11 @@ elif st.session_state.view == 'lab':
     # --- Config ---
     st.sidebar.header("⚙️ Simulación")
     inversion = st.sidebar.number_input("Inversión ($)", 1000, 1000000, 10000)
-    
     dias_sim = st.sidebar.slider("Días a Simular", 7, 180, 30)
     vol_days = st.sidebar.slider("Ventana Volatilidad", 3, 30, 7)
     
     st.sidebar.subheader("Estrategia")
     sd_mult = st.sidebar.slider("Amplitud (SD)", 0.1, 3.0, 1.0, step=0.1)
-    
     auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear", value=False)
     if auto_rebalance: st.sidebar.caption("⚠️ Coste swap: 0.3%")
     
@@ -168,7 +163,7 @@ elif st.session_state.view == 'lab':
                 tester = Backtester()
                 history_data = provider.get_pool_history(address).get('history', [])
                 
-                fee_est = 0.003 # Placeholder, backtester usa el real
+                fee_est = 0.003
                 
                 df_res, min_p, max_p, meta = tester.run_simulation(
                     history_data, inversion, sd_mult, 
@@ -223,6 +218,5 @@ elif st.session_state.view == 'lab':
                     with st.expander("Ver detalle"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
                         st.dataframe(df_res[cols])
-                else: st.error("Datos insuficientes.")
                 else:
                     st.error("Datos insuficientes.")
