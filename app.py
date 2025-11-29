@@ -1,24 +1,52 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import importlib
+
+# --- RECARGA EN CALIENTE (Desarrollo) ---
+import uni_v3_kit.analyzer
+import uni_v3_kit.data_provider
+import uni_v3_kit.backtester
+import uni_v3_kit.math_core
+import uni_v3_kit.nft_gate
+
+importlib.reload(uni_v3_kit.math_core)
+importlib.reload(uni_v3_kit.analyzer)
+importlib.reload(uni_v3_kit.data_provider)
+importlib.reload(uni_v3_kit.backtester)
+importlib.reload(uni_v3_kit.nft_gate)
+
 from uni_v3_kit.analyzer import MarketScanner
 from uni_v3_kit.data_provider import DataProvider
 from uni_v3_kit.backtester import Backtester
+from uni_v3_kit.nft_gate import check_access
 
-st.set_page_config(page_title="Cazador V3 Lab", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Cazador V3", layout="wide", initial_sidebar_state="collapsed")
 
 # --- ESTILOS CSS ---
 st.markdown("""
 <style>
     [data-testid="stSidebar"] {display: none;}
-    .main .block-container {padding-top: 2rem;}
-    h1 {text-align: center; color: #FF4B4B;}
-    .stButton button {width: 100%; border-radius: 8px; font-weight: bold;}
-    div[data-testid="stMetricValue"] {font-size: 1.4rem;}
+    .main .block-container {padding-top: 2rem; max-width: 1200px;}
+    h1 {text-align: center; color: #FF4B4B; font-weight: 800;}
+    .stButton button {width: 100%; border-radius: 8px; font-weight: bold; height: 3rem;}
+    div[data-testid="stMetricValue"] {font-size: 1.6rem; color: #31333F;}
+    
+    .login-container {
+        max-width: 500px;
+        margin: 50px auto;
+        padding: 2rem;
+        border-radius: 12px;
+        background-color: #f0f2f6;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- GESTIÓN DE NAVEGACIÓN ---
+# --- GESTIÓN DE ESTADO ---
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+if 'wallet_address' not in st.session_state: st.session_state.wallet_address = ""
+
 if 'step' not in st.session_state: st.session_state.step = 'home'
 if 'scan_params' not in st.session_state: st.session_state.scan_params = {}
 if 'scan_results' not in st.session_state: st.session_state.scan_results = None
@@ -37,10 +65,54 @@ def go_to_lab(pool_row):
     st.session_state.step = 'lab'
 
 # ==========================================
-# 1. INICIO
+# 0. PANTALLA DE LOGIN (NFT GATE)
+# ==========================================
+if not st.session_state.authenticated:
+    st.title("🔒 Acceso Restringido")
+    
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c2:
+        st.markdown("""
+        <div class="login-container">
+            <h3>Solo Holders</h3>
+            <p>Verifica que posees el NFT de acceso en la red <b>Arbitrum</b>.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.form("login_form"):
+            wallet_input = st.text_input("Tu Billetera (0x...):", placeholder="0x...")
+            submit_login = st.form_submit_button("Conectar y Verificar 🔑")
+            
+            if submit_login:
+                if not wallet_input:
+                    st.error("Introduce una dirección.")
+                else:
+                    with st.spinner("Consultando blockchain..."):
+                        has_access, msg = check_access(wallet_input)
+                        if has_access:
+                            st.session_state.authenticated = True
+                            st.session_state.wallet_address = wallet_input
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+    st.stop()
+
+# ==========================================
+# BARRA DE USUARIO (Logout)
+# ==========================================
+col_logo, col_user = st.columns([8, 2])
+with col_user:
+    short_w = f"{st.session_state.wallet_address[:6]}...{st.session_state.wallet_address[-4:]}"
+    if st.button(f"🔓 Salir ({short_w})", key="logout_btn"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+# ==========================================
+# 1. INICIO (WIZARD)
 # ==========================================
 if st.session_state.step == 'home':
-    st.title("🏹 Cazador de Oportunidades en (mucho)pools")
+    st.title("🦄 Cazador de Oportunidades Uniswap V3")
     st.markdown("---")
     
     c1, c2, c3 = st.columns([1, 3, 1])
@@ -49,6 +121,7 @@ if st.session_state.step == 'home':
         modo = st.radio("", ["🔍 Escanear Mercado (Búsqueda Avanzada)", "🎯 Analizar un Pool Específico (por contrato)"], label_visibility="collapsed")
         st.write("") 
         
+        # OPCIÓN A: ESCÁNER
         if modo == "🔍 Escanear Mercado (Búsqueda Avanzada)":
             with st.form("scanner_form"):
                 st.markdown("### ⚙️ Configuración del Escáner")
@@ -108,6 +181,7 @@ if st.session_state.step == 'home':
                         else:
                             st.error("No se encontraron pools con esos criterios.")
 
+        # OPCIÓN B: MANUAL
         else: 
             with st.form("manual_form"):
                 st.markdown("### 🎯 Análisis Directo")
@@ -148,7 +222,7 @@ elif st.session_state.step == 'results':
     sd = st.session_state.scan_params.get('sd', 1.0)
     
     st.info(f"""
-    **Top {len(df)} Oportunidades.** Ordenado por **Ratio F/IL**.
+    **Top {len(df)} Oportunidades.** Ordenado por **Ratio F/IL** (Retorno / Riesgo).
     Criterio: Fees Probables ({dias}d) vs Riesgo Salida ({sd} SD).
     """)
     
@@ -173,14 +247,15 @@ elif st.session_state.step == 'results':
         }
     )
     
-    st.subheader("🧪 Seleccionar para Laboratorio")
+    st.subheader("🧪 Pasar al Laboratorio")
     c1, c2 = st.columns([3, 1])
     with c1:
-        df_display = df.reset_index(drop=True)
         def format_option(idx):
-            row = df_display.iloc[idx]
+            row = df.iloc[idx]
             return f"{row['Par']} ({row['DEX']} - {row['Red']}) | Ratio: {row['Ratio F/IL']:.2f}"
-        sel_idx = st.selectbox("Pool:", options=df_display.index, format_func=format_option)
+        
+        sel_idx = st.selectbox("Elige un pool para simular:", df.index, format_func=format_option)
+        
     with c2:
         st.write(""); st.write("")
         if st.button("Ir al Laboratorio ➡️", use_container_width=True):
@@ -193,7 +268,7 @@ elif st.session_state.step == 'results':
 # ==========================================
 elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
-    st.button("⬅️ Volver", on_click=lambda: setattr(st.session_state, 'step', 'results'))
+    st.button("⬅️ Volver a Resultados", on_click=lambda: setattr(st.session_state, 'step', 'results'))
     
     st.title(f"🧪 Lab: {pool['Par']}")
     col_apr_lab = [c for c in pool.index if "APR (" in c][0]
@@ -203,18 +278,18 @@ elif st.session_state.step == 'lab':
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     val_apr = pool[col_apr_lab] * 100 
     c3.metric("APR Medio", f"{val_apr:.1f}%")
-    c4.metric("Ratio F/IL", f"{pool.get('Ratio F/IL', 0):.2f}")
+    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%") 
     
     st.markdown("---")
     
+    # --- Configuración Backtest ---
     with st.container():
         c_conf1, c_conf2 = st.columns(2)
         with c_conf1:
             st.subheader("⚙️ Simulación")
             inversion = st.number_input("Inversión ($)", 1000, 1000000, 10000)
             dias_sim = st.slider("Días a Simular", 7, 180, 30)
-            vol_days = st.sidebar.slider("Ventana Volatilidad", 3, 30, 7) if 'vol_days' not in st.session_state else st.session_state.vol_days # FIX: Mover sliders al main
-            # Muevo los sliders de estrategia aquí abajo para que estén juntos
+            vol_days = st.slider("Ventana Volatilidad", 3, 30, 7)
             
         with c_conf2:
             st.subheader("🎯 Estrategia")
@@ -222,12 +297,11 @@ elif st.session_state.step == 'lab':
             vol_def = st.session_state.scan_params.get('dias', 7)
             
             sd_mult_lab = st.slider("Amplitud Rango (SD)", 0.1, 3.0, sd_def, step=0.1)
-            vol_days_lab = st.slider("Ventana Volatilidad (Lookback)", 3, 30, vol_def)
             auto_rebalance = st.checkbox("Auto-Rebalancear (Coste 0.3%)", value=False)
     
     if st.button("🚀 Ejecutar Simulación Histórica", use_container_width=True):
         address = pool.get('Address')
-        if not address: st.error("Error: Falta dirección.")
+        if not address: st.error("Falta dirección.")
         else:
             with st.spinner("Simulando..."):
                 provider = DataProvider()
@@ -241,7 +315,7 @@ elif st.session_state.step == 'lab':
 
                 df_res, min_p, max_p, meta = tester.run_simulation(
                     history_data, inversion, sd_mult_lab, 
-                    sim_days=dias_sim, vol_days=vol_days_lab, 
+                    sim_days=dias_sim, vol_days=vol_days, 
                     fee_tier=fee_est, auto_rebalance=auto_rebalance
                 )
                 
@@ -261,15 +335,15 @@ elif st.session_state.step == 'lab':
                     w_pct = meta['initial_range_width_pct'] * 100
                     st.info(f"**Rango Inicial:** ±{w_pct:.1f}%. Entrada: {p_ini:.4f}. Límites: {min_p:.4f} - {max_p:.4f}")
                     
-                    # Gráficos
                     st.subheader("💰 Rendimiento")
                     fig1 = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"})
+                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
+                                   title="Rendimiento Acumulado")
                     st.plotly_chart(fig1, use_container_width=True)
                     
                     st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%")
 
                     fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                            color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
@@ -285,9 +359,8 @@ elif st.session_state.step == 'lab':
                         
                     st.plotly_chart(fig_price, use_container_width=True)
                     
-                    with st.expander("Ver Tabla Detallada ({} registros)".format(len(df_res)), expanded=True):
+                    with st.expander("Ver Tabla Detallada"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
-                        
                         st.dataframe(
                             df_res[cols],
                             use_container_width=True,
@@ -303,4 +376,5 @@ elif st.session_state.step == 'lab':
                                 "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
                             }
                         )
+
                 else: st.error("Datos insuficientes.")
