@@ -27,6 +27,7 @@ class MarketScanner:
         aprs = [x.get('apr', 0) for x in data_window if x.get('apr') is not None]
         
         if aprs:
+            # API devuelve 50.5 para 50.5%. Pasamos a decimal 0.505
             apr_promedio_anual = sum(aprs) / len(aprs) / 100.0 
         else:
             apr_promedio_anual = 0.0
@@ -65,7 +66,7 @@ class MarketScanner:
         # Margen Neto
         margen = probable_yield - il_loss_at_limit
         
-        # Ratio Beneficio / Riesgo (Nuevo)
+        # Ratio Beneficio / Riesgo (Nuevo nombre)
         riesgo_safe = max(il_loss_at_limit, 0.0001)
         ratio_br = probable_yield / riesgo_safe
         
@@ -101,6 +102,7 @@ class MarketScanner:
             f"APR ({days_window}d)": apr_promedio_anual,
             "Volatilidad": vol_annual * 100.0,
             "Rango Est.": range_width_pct * 100.0,
+            # "Prob. Rango": Eliminado por solicitud
             "Est. Fees": probable_yield * 100.0,
             "IL": il_loss_at_limit * 100.0,        # Renombrado de Max IL a IL
             "Ratio F/IL": ratio_br,                # Renombrado de Ratio F/R
@@ -128,13 +130,16 @@ class MarketScanner:
         raw_pools = self.data.get_all_pools()
         candidates = []
         
-        # Normalizar activos para búsqueda
-        assets_to_search = [a.upper() for a in selected_assets if a != "Otro"]
+        # Preparar lista de búsqueda de activos (normalizada a mayúsculas)
+        assets_to_search = []
+        if selected_assets:
+            assets_to_search = [a.upper() for a in selected_assets if a != "Otro"]
         if custom_asset:
             assets_to_search.append(custom_asset.upper())
             
         for p in raw_pools:
-            # 1. Filtro Red
+            # 1. Filtro Red (Si la lista no está vacía y no contiene 'Todas')
+            # Nota: Desde app enviaremos lista vacía si el usuario quiere 'Todas'
             p_chain = p.get('ChainId')
             if target_chains and p_chain not in target_chains:
                 continue
@@ -159,7 +164,8 @@ class MarketScanner:
             candidates.append(p)
         
         # Priorizar por Volumen para analizar primero los más líquidos
-        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:150] # Analizamos 150 max
+        # Aumentamos el límite de pre-candidatos para tener margen tras el filtro de APR
+        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:150]
         
         results = []
         for pool in candidates:
@@ -167,21 +173,23 @@ class MarketScanner:
             if not address: address = pool.get('_id') 
 
             pool_detail = self.data.get_pool_history(address)
+            
             result = self._process_pool_data(pool_detail, days_window, sd_multiplier)
             
             if result:
-                # 4. Filtro APR Mínimo (Sobre el calculado real)
+                # 4. Filtro APR Mínimo (Sobre el calculado real del periodo analizado)
+                # El result tiene el APR en formato decimal 0.50, multiplicamos por 100 para comparar con input usuario (10%)
                 apr_calc = result.get(f"APR ({days_window}d)", 0) * 100
-                if apr_calc < min_apr: continue
                 
-                result['Address'] = address
-                results.append(result)
+                if apr_calc >= min_apr:
+                    result['Address'] = address
+                    results.append(result)
             
         # Convertimos a DataFrame
         df = pd.DataFrame(results)
         
         if not df.empty:
-            # Ordenar por TVL y devolver Top 100
+            # Ordenar por TVL descendente y devolver Top 100
             df = df.sort_values(by="TVL", ascending=False).head(100)
             
         return df
