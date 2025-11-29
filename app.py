@@ -1,20 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import importlib
-
-# --- TRUCO PARA FORZAR RECARGA DE MÓDULOS ---
-# Esto asegura que si cambiaste math_core.py o analyzer.py, se lean los cambios
-import uni_v3_kit.math_core
-import uni_v3_kit.analyzer
-import uni_v3_kit.data_provider
-import uni_v3_kit.backtester
-
-importlib.reload(uni_v3_kit.math_core)
-importlib.reload(uni_v3_kit.analyzer)
-importlib.reload(uni_v3_kit.data_provider)
-importlib.reload(uni_v3_kit.backtester)
-
 from uni_v3_kit.analyzer import MarketScanner
 from uni_v3_kit.data_provider import DataProvider
 from uni_v3_kit.backtester import Backtester
@@ -51,7 +37,7 @@ def go_to_lab(pool_row):
     st.session_state.step = 'lab'
 
 # ==========================================
-# 1. PANTALLA DE INICIO
+# 1. INICIO
 # ==========================================
 if st.session_state.step == 'home':
     st.title("🦄 Cazador de Oportunidades Uniswap V3")
@@ -61,12 +47,11 @@ if st.session_state.step == 'home':
     with c2:
         st.subheader("¿Qué quieres hacer hoy?")
         modo = st.radio("", ["🔍 Escanear Mercado (Búsqueda Avanzada)", "🎯 Analizar un Pool Específico (por contrato)"], label_visibility="collapsed")
-        
         st.write("") 
         
         if modo == "🔍 Escanear Mercado (Búsqueda Avanzada)":
             with st.form("scanner_form"):
-                st.markdown("### ⚙️ Parámetros de Búsqueda")
+                st.markdown("### ⚙️ Configuración del Escáner")
                 
                 @st.cache_data(ttl=3600)
                 def get_chains():
@@ -79,11 +64,11 @@ if st.session_state.step == 'home':
                 c_a, c_b = st.columns(2)
                 with c_a:
                     min_tvl = st.number_input("TVL Mínimo ($)", value=250000, step=50000)
-                    dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7)
+                    dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7, help="Días para calcular medias.")
                 
                 with c_b:
                     min_apr = st.number_input("APR Mínimo (%)", value=10.0, step=1.0)
-                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1)
+                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1, help="Amplitud para calcular el IL de salida.")
 
                 st.markdown("**Filtrar por Activos:**")
                 assets = ["BTC", "ETH", "SOL", "HYPE", "BNB", "Otro"]
@@ -151,7 +136,7 @@ if st.session_state.step == 'home':
                                 st.error("No se encontraron datos para esa dirección.")
 
 # ==========================================
-# 2. PANTALLA DE RESULTADOS
+# 2. RESULTADOS
 # ==========================================
 elif st.session_state.step == 'results':
     c_back, c_title = st.columns([1, 6])
@@ -163,14 +148,12 @@ elif st.session_state.step == 'results':
     sd = st.session_state.scan_params.get('sd', 1.0)
     
     st.info(f"""
-    **Top {len(df)} Oportunidades.** Ordenado por **Ratio F/IL** (Retorno / Riesgo).
-    Criterio: Si **Fees Probables** en {dias} días > **IL** al tocar rango de {sd} SD.
+    **Top {len(df)} Oportunidades.** Ordenado por **Ratio F/IL**.
+    Criterio: Fees Probables ({dias}d) vs Riesgo Salida ({sd} SD).
     """)
     
     df_display = df.copy()
     col_apr = [c for c in df_display.columns if "APR (" in c][0]
-    
-    # Multiplicar APR por 100 para visualización
     df_display[col_apr] = df_display[col_apr] * 100
     
     st.dataframe(
@@ -184,19 +167,20 @@ elif st.session_state.step == 'results':
             "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
             "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
             "Est. Fees": st.column_config.NumberColumn(f"Fees Prob.", format="%.2f%%"),
-            "IL": st.column_config.NumberColumn("IL (Riesgo)", format="%.2f%%"), # Ahora debería mostrar el dato real
+            "IL": st.column_config.NumberColumn("IL (Riesgo)", format="%.2f%%"),
             "Ratio F/IL": st.column_config.NumberColumn("Ratio F/IL", format="%.2f", help="Mayor es mejor"),
             "Margen": None 
         }
     )
     
-    st.subheader("🧪 Pasar al Laboratorio")
+    st.subheader("🧪 Seleccionar para Laboratorio")
     c1, c2 = st.columns([3, 1])
     with c1:
+        df_display = df.reset_index(drop=True)
         def format_option(idx):
-            row = df.iloc[idx]
+            row = df_display.iloc[idx]
             return f"{row['Par']} ({row['DEX']} - {row['Red']}) | Ratio: {row['Ratio F/IL']:.2f}"
-        sel_idx = st.selectbox("Selecciona pool:", options=df.index, format_func=format_option)
+        sel_idx = st.selectbox("Pool:", options=df_display.index, format_func=format_option)
     with c2:
         st.write(""); st.write("")
         if st.button("Ir al Laboratorio ➡️", use_container_width=True):
@@ -205,7 +189,7 @@ elif st.session_state.step == 'results':
             st.rerun()
 
 # ==========================================
-# 3. PANTALLA DE LABORATORIO
+# 3. LABORATORIO
 # ==========================================
 elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
@@ -215,7 +199,7 @@ elif st.session_state.step == 'lab':
     col_apr_lab = [c for c in pool.index if "APR (" in c][0]
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Red / DEX", f"{pool['Red']} / {pool['DEX']}") 
+    c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     val_apr = pool[col_apr_lab] * 100 
     c3.metric("APR Medio", f"{val_apr:.1f}%")
@@ -223,17 +207,25 @@ elif st.session_state.step == 'lab':
     
     st.markdown("---")
     
-    # --- Config ---
-    st.sidebar.header("⚙️ Simulación")
-    inversion = st.sidebar.number_input("Inversión ($)", 1000, 1000000, 10000)
-    dias_sim = st.sidebar.slider("Días a Simular", 7, 180, 30)
-    vol_days = st.sidebar.slider("Ventana Volatilidad", 3, 30, 7)
+    with st.container():
+        c_conf1, c_conf2 = st.columns(2)
+        with c_conf1:
+            st.subheader("⚙️ Simulación")
+            inversion = st.number_input("Inversión ($)", 1000, 1000000, 10000)
+            dias_sim = st.slider("Días a Simular", 7, 180, 30)
+            vol_days = st.sidebar.slider("Ventana Volatilidad", 3, 30, 7) if 'vol_days' not in st.session_state else st.session_state.vol_days # FIX: Mover sliders al main
+            # Muevo los sliders de estrategia aquí abajo para que estén juntos
+            
+        with c_conf2:
+            st.subheader("🎯 Estrategia")
+            sd_def = st.session_state.scan_params.get('sd', 1.0)
+            vol_def = st.session_state.scan_params.get('dias', 7)
+            
+            sd_mult_lab = st.slider("Amplitud Rango (SD)", 0.1, 3.0, sd_def, step=0.1)
+            vol_days_lab = st.slider("Ventana Volatilidad (Lookback)", 3, 30, vol_def)
+            auto_rebalance = st.checkbox("Auto-Rebalancear (Coste 0.3%)", value=False)
     
-    st.sidebar.subheader("Estrategia")
-    sd_mult = st.sidebar.slider("Amplitud (SD)", 0.1, 3.0, 1.0, step=0.1)
-    auto_rebalance = st.sidebar.checkbox("Auto-Rebalancear", value=False)
-    
-    if st.button("🚀 Ejecutar Simulación Histórica"):
+    if st.button("🚀 Ejecutar Simulación Histórica", use_container_width=True):
         address = pool.get('Address')
         if not address: st.error("Error: Falta dirección.")
         else:
@@ -248,8 +240,8 @@ elif st.session_state.step == 'lab':
                 elif "1%" in str(pool['Par']): fee_est = 0.01
 
                 df_res, min_p, max_p, meta = tester.run_simulation(
-                    history_data, inversion, sd_mult, 
-                    sim_days=dias_sim, vol_days=vol_days, 
+                    history_data, inversion, sd_mult_lab, 
+                    sim_days=dias_sim, vol_days=vol_days_lab, 
                     fee_tier=fee_est, auto_rebalance=auto_rebalance
                 )
                 
@@ -264,36 +256,38 @@ elif st.session_state.step == 'lab':
                     k3.metric("Fees Totales", f"${last['Fees Acum']:,.2f}")
                     
                     if auto_rebalance: st.info(f"🔄 **{meta['rebalances']} rebalanceos** realizados.")
-
+                    
                     p_ini = df_res.iloc[0]['Price']
                     w_pct = meta['initial_range_width_pct'] * 100
                     st.info(f"**Rango Inicial:** ±{w_pct:.1f}%. Entrada: {p_ini:.4f}. Límites: {min_p:.4f} - {max_p:.4f}")
                     
+                    # Gráficos
                     st.subheader("💰 Rendimiento")
                     fig1 = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
-                                   title="Rendimiento Acumulado")
+                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"})
                     st.plotly_chart(fig1, use_container_width=True)
                     
+                    st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x*100:.1f}%")
-                    
-                    fig2 = px.scatter(df_res, x='Date', y='Price', color='Estado',
-                                      color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
-                                      hover_data={'Ancho Rango': True}, title="Precio vs Rango")
-                    fig2.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
+                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
+
+                    fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
+                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
+                                           hover_data={'Ancho Rango': True})
+                    fig_price.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
                     
                     if not auto_rebalance:
-                        fig2.add_hline(y=min_p, line_dash="dash", line_color="red")
-                        fig2.add_hline(y=max_p, line_dash="dash", line_color="green")
+                        fig_price.add_hline(y=min_p, line_dash="dash", line_color="red")
+                        fig_price.add_hline(y=max_p, line_dash="dash", line_color="green")
                     else:
-                        fig2.add_traces(px.line(df_res, x='Date', y='Range Min').update_traces(line=dict(color='red', dash='dash')).data[0])
-                        fig2.add_traces(px.line(df_res, x='Date', y='Range Max').update_traces(line=dict(color='green', dash='dash')).data[0])
+                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Min').update_traces(line=dict(color='red', dash='dash')).data[0])
+                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Max').update_traces(line=dict(color='green', dash='dash')).data[0])
                         
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(fig_price, use_container_width=True)
                     
-                    with st.expander("Ver Tabla Detallada"):
+                    with st.expander("Ver Tabla Detallada ({} registros)".format(len(df_res)), expanded=True):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
+                        
                         st.dataframe(
                             df_res[cols],
                             use_container_width=True,
