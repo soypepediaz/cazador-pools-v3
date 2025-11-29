@@ -82,7 +82,7 @@ class Backtester:
         # A. Calcular Rango Inicial
         range_width_pct, initial_vol = self._calculate_dynamic_range(full_history_chrono, sim_start_idx, vol_days, sd_multiplier)
         
-        # --- CÁLCULO DE EFICIENCIA (TU FÓRMULA) ---
+        # CÁLCULO DE EFICIENCIA (TU FÓRMULA)
         full_amplitude = range_width_pct * 2
         if full_amplitude > 0:
             efficiency_mult = 1 / full_amplitude
@@ -135,7 +135,7 @@ class Backtester:
                 new_width_pct, _ = self._calculate_dynamic_range(full_history_chrono, i, vol_days, sd_multiplier)
                 range_width_pct = new_width_pct 
                 
-                # Recalcular eficiencia con el nuevo ancho
+                # Recalcular eficiencia
                 full_amplitude = range_width_pct * 2
                 efficiency_mult = 1 / full_amplitude if full_amplitude > 0 else 1.0
                 efficiency_mult = min(efficiency_mult, 100.0)
@@ -161,9 +161,7 @@ class Backtester:
             fees_earned_period = 0.0
             
             if in_range and apr_snapshot:
-                # 1. Yield Base Normalizado
-                # APR (porcentaje) -> Decimal (0.50)
-                # Dividimos por 365 días y luego por 3 (periodos de 8h) = 1095
+                # 1. Yield Base Normalizado (APR / 1095)
                 base_period_yield = (float(apr_snapshot) / 100.0) / 1095.0
                 
                 # 2. Aplicar Multiplicador E = 1 / ancho
