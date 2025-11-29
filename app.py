@@ -7,7 +7,7 @@ from uni_v3_kit.backtester import Backtester
 
 st.set_page_config(page_title="Cazador V3", layout="wide", initial_sidebar_state="collapsed")
 
-# --- ESTILOS CSS PARA OCULTAR SIDEBAR Y MEJORAR UI ---
+# --- ESTILOS CSS (UI Limpia) ---
 st.markdown("""
 <style>
     [data-testid="stSidebar"] {display: none;}
@@ -37,47 +37,45 @@ def go_to_lab(pool_row):
     st.session_state.step = 'lab'
 
 # ==========================================
-# 1. PANTALLA DE INICIO (SELECCIÓN DE MODO)
+# 1. PANTALLA DE INICIO (WIZARD)
 # ==========================================
 if st.session_state.step == 'home':
     st.title("🦄 Cazador de Oportunidades Uniswap V3")
     st.markdown("---")
     
-    c1, c2, c3 = st.columns([1, 2, 1])
+    c1, c2, c3 = st.columns([1, 3, 1])
     with c2:
         st.subheader("¿Qué quieres hacer hoy?")
-        modo = st.radio("", ["🔍 Escanear el Mercado en busca de Oportunidades", "🎯 Analizar un Pool Específico (por contrato)"], label_visibility="collapsed")
+        modo = st.radio("", ["🔍 Escanear Mercado (Búsqueda Avanzada)", "🎯 Analizar un Pool Específico (por contrato)"], label_visibility="collapsed")
         
-        st.write("") # Espacio
+        st.write("") 
         
-        if modo == "🔍 Escanear el Mercado en busca de Oportunidades":
+        # --- OPCIÓN A: ESCÁNER ---
+        if modo == "🔍 Escanear Mercado (Búsqueda Avanzada)":
             with st.form("scanner_form"):
                 st.markdown("### ⚙️ Configuración del Escáner")
                 
-                # A) REDES
+                # 1. Redes
                 @st.cache_data(ttl=3600)
                 def get_chains():
                     p = DataProvider(); 
                     try: return sorted(list({x.get('ChainId') for x in p.get_all_pools() if x.get('ChainId')}))
                     except: return ["ethereum", "arbitrum", "base", "bsc"]
                 
-                chains = st.multiselect("Redes (Deja vacío para buscar en todas)", get_chains(), default=[])
+                chains = st.multiselect("Redes (Deja vacío para todas)", get_chains(), default=[])
                 
+                # 2. Parámetros Numéricos
                 c_a, c_b = st.columns(2)
                 with c_a:
-                    # B) TVL
                     min_tvl = st.number_input("TVL Mínimo ($)", value=250000, step=50000)
-                    # C) VENTANA
-                    dias_window = st.slider("Ventana de Análisis (Días)", 3, 30, 7, help="Días para calcular APR promedio y volatilidad.")
+                    dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7, help="Días para calcular medias.")
                 
                 with c_b:
-                    # E) APR MIN
                     min_apr = st.number_input("APR Mínimo (%)", value=10.0, step=1.0)
-                    # D) FACTOR RANGO
-                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1, help="Multiplicador de Desviación Típica para el rango.")
+                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1, help="Amplitud para calcular el IL de salida.")
 
-                # F) ACTIVOS
-                st.markdown("**Activos de Interés:**")
+                # 3. Activos
+                st.markdown("**Filtrar por Activos:**")
                 assets = ["BTC", "ETH", "SOL", "HYPE", "BNB", "Otro"]
                 selected_assets = []
                 
@@ -88,17 +86,16 @@ if st.session_state.step == 'home':
                 
                 custom_asset = None
                 if "Otro" in selected_assets:
-                    custom_asset = st.text_input("Escribe el nombre del activo (ej: PEPE, USDC):")
+                    custom_asset = st.text_input("Escribe el símbolo (ej: PEPE, USDC):")
 
+                st.markdown("---")
                 submitted = st.form_submit_button("🚀 Escanear Mercado")
                 
                 if submitted:
                     scanner = MarketScanner()
                     with st.spinner("Analizando pools... esto puede tardar unos segundos"):
-                        # Convertimos cadenas vacías a None para que el scanner busque en todas
                         target_chains = chains if chains else None
                         
-                        # Llamada al nuevo método scan con filtros avanzados
                         df = scanner.scan(
                             target_chains=target_chains,
                             min_tvl=min_tvl,
@@ -110,14 +107,15 @@ if st.session_state.step == 'home':
                         )
                         
                         if not df.empty:
-                            # Guardamos parámetros para usarlos en el lab
+                            # Guardamos parámetros para usarlos en el lab y en la visualización
                             st.session_state.scan_params = {'dias': dias_window, 'sd': sd_mult}
                             go_to_results(df)
                             st.rerun()
                         else:
-                            st.error("No se encontraron pools que cumplan todos los criterios.")
+                            st.error("No se encontraron pools con esos criterios.")
 
-        else: # MODO ANALIZAR POOL ESPECÍFICO
+        # --- OPCIÓN B: MANUAL ---
+        else: 
             with st.form("manual_form"):
                 st.markdown("### 🎯 Análisis Directo")
                 address = st.text_input("Dirección del Contrato (0x...):")
@@ -132,10 +130,10 @@ if st.session_state.step == 'home':
                 
                 if submitted_manual:
                     if not address:
-                        st.error("Por favor, pega una dirección.")
+                        st.error("Introduce una dirección.")
                     else:
                         scanner = MarketScanner()
-                        with st.spinner("Buscando datos del contrato..."):
+                        with st.spinner("Buscando datos..."):
                             df = scanner.analyze_single_pool(address, days_window=dias_window, sd_multiplier=sd_mult)
                             if not df.empty:
                                 st.session_state.scan_params = {'dias': dias_window, 'sd': sd_mult}
@@ -145,29 +143,28 @@ if st.session_state.step == 'home':
                                 st.error("No se encontraron datos para esa dirección.")
 
 # ==========================================
-# 2. PANTALLA DE RESULTADOS (TABLA)
+# 2. PANTALLA DE RESULTADOS
 # ==========================================
 elif st.session_state.step == 'results':
-    st.button("⬅️ Volver al Inicio", on_click=go_home)
-    st.title("📊 Resultados del Análisis")
+    c_back, c_title = st.columns([1, 6])
+    c_back.button("⬅️ Inicio", on_click=go_home)
+    c_title.subheader("📊 Resultados del Análisis")
     
     df = st.session_state.scan_results
-    dias = st.session_state.scan_params['dias']
-    sd = st.session_state.scan_params['sd']
+    dias = st.session_state.scan_params.get('dias', 7)
+    sd = st.session_state.scan_params.get('sd', 1.0)
     
-    # Mensaje resumen
     st.info(f"""
-    **Criterio:** Pools donde **Fees ({dias}d)** > **IL ({sd} SD)**.  
-    Mostrando los mejores **{len(df)}** resultados ordenados por **Ratio F/IL** (Calidad) o **TVL**.
+    **Top {len(df)} Oportunidades.** Ordenado por **Ratio F/IL** (Retorno / Riesgo).
+    Criterio: Si **Fees Probables** en {dias} días > **IL** al tocar rango de {sd} SD.
     """)
     
-    # Preparación de columnas dinámicas
-    col_apr = [c for c in df.columns if "APR (" in c][0]
-    
-    # Formato visual para la tabla
-    # Multiplicamos APR por 100 para visualización correcta (si viene decimal)
-    # Nota: Asumimos que analyzer ya devuelve decimales (0.5) para %.
+    # Preparamos visualización
     df_display = df.copy()
+    # Detectamos nombre de columna APR dinámico
+    col_apr = [c for c in df_display.columns if "APR (" in c][0]
+    
+    # Visual Fix: APR viene en decimal (0.5), multiplicamos por 100
     df_display[col_apr] = df_display[col_apr] * 100
     
     st.dataframe(
@@ -180,10 +177,12 @@ elif st.session_state.step == 'results':
             col_apr: st.column_config.NumberColumn(format="%.1f%%"),
             "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
             "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
-            "Est. Fees": st.column_config.NumberColumn(f"Fees Est.", format="%.2f%%", help="Retorno estimado en el periodo"),
-            "IL": st.column_config.NumberColumn("Riesgo IL", format="%.2f%%", help="Pérdida por salida de rango"),
-            "Ratio F/IL": st.column_config.NumberColumn("Ratio F/IL", format="%.2f"),
-            "Margen": None # Oculto
+            # COLUMNAS NUEVAS DE TU ESTRATEGIA
+            "Est. Fees": st.column_config.NumberColumn(f"Fees Prob.", format="%.2f%%", help="Fees ajustadas por probabilidad"),
+            "IL": st.column_config.NumberColumn("IL (Riesgo)", format="%.2f%%", help="Pérdida IL si sale de rango"),
+            "Ratio F/IL": st.column_config.NumberColumn("Ratio F/IL", format="%.2f", help="Mayor es mejor"),
+            # Ocultamos columnas técnicas
+            "Margen": None
         }
     )
     
@@ -192,44 +191,46 @@ elif st.session_state.step == 'results':
     
     c1, c2 = st.columns([3, 1])
     with c1:
-        # Selector inteligente
         def format_option(idx):
             row = df.iloc[idx]
-            return f"{row['Par']} ({row['DEX']} - {row['Red']})"
+            return f"{row['Par']} ({row['DEX']} - {row['Red']}) | Ratio: {row['Ratio F/IL']:.2f}"
         
         sel_idx = st.selectbox("Elige un pool para simular:", df.index, format_func=format_option)
         
     with c2:
         st.write(""); st.write("")
-        if st.button("Ir al Laboratorio ➡️"):
+        if st.button("Ir al Laboratorio ➡️", use_container_width=True):
             row = df.iloc[sel_idx]
             go_to_lab(row)
             st.rerun()
 
 # ==========================================
-# 3. PANTALLA DE LABORATORIO (BACKTEST)
+# 3. PANTALLA DE LABORATORIO
 # ==========================================
 elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
     
-    # Botón para volver a RESULTADOS (no a inicio)
+    # Botón volver a resultados
     if st.button("⬅️ Volver a Resultados"):
         st.session_state.step = 'results'
         st.rerun()
     
     st.title(f"🧪 Lab: {pool['Par']}")
     
-    # Métricas Cabecera
     col_apr_lab = [c for c in pool.index if "APR (" in c][0]
+    
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Red / DEX", f"{pool['Red']} / {pool['DEX']}")
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    c3.metric("APR Medio", f"{pool[col_apr_lab]*100:.1f}%")
-    c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
+    
+    # Visual APR Fix
+    val_apr = pool[col_apr_lab] * 100
+    c3.metric("APR Medio", f"{val_apr:.1f}%")
+    c4.metric("Ratio F/IL", f"{pool.get('Ratio F/IL', 0):.2f}")
     
     st.markdown("---")
     
-    # --- CONFIGURACIÓN BACKTEST ---
+    # --- Configuración Backtest ---
     with st.container():
         c_conf1, c_conf2 = st.columns(2)
         with c_conf1:
@@ -239,66 +240,66 @@ elif st.session_state.step == 'lab':
             
         with c_conf2:
             st.subheader("🎯 Estrategia")
-            # Recuperamos la SD usada en el filtro como valor por defecto
-            sd_default = st.session_state.scan_params.get('sd', 1.0)
-            sd_mult_lab = st.slider("Amplitud Rango (SD)", 0.1, 3.0, sd_default, step=0.1)
+            # Defaults del escáner
+            sd_def = st.session_state.scan_params.get('sd', 1.0)
+            vol_def = st.session_state.scan_params.get('dias', 7)
             
-            # Recuperamos la ventana de volatilidad del filtro
-            vol_days_lab = st.slider("Ventana Volatilidad", 3, 30, st.session_state.scan_params.get('dias', 7))
-            
+            sd_mult_lab = st.slider("Amplitud Rango (SD)", 0.1, 3.0, sd_def, step=0.1)
+            vol_days_lab = st.slider("Ventana Volatilidad", 3, 30, vol_def)
             auto_rebalance = st.checkbox("Auto-Rebalancear (Coste 0.3%)", value=False)
-
+    
     if st.button("🚀 Ejecutar Simulación Histórica", use_container_width=True):
         address = pool.get('Address')
-        if not address: st.error("Error: Falta dirección.")
+        if not address: st.error("Error: Falta dirección (Address).")
         else:
             with st.spinner("Simulando..."):
                 provider = DataProvider()
                 tester = Backtester()
-                history = provider.get_pool_history(address).get('history', [])
+                history_data = provider.get_pool_history(address).get('history', [])
                 
-                # Fee Estimado para el backtester
-                fee_est = 0.003 # Default
+                fee_est = 0.003 
+                # Intento de deducir fee tier del nombre si es posible
                 if "0.05%" in str(pool['Par']): fee_est = 0.0005
                 elif "0.01%" in str(pool['Par']): fee_est = 0.0001
                 elif "1%" in str(pool['Par']): fee_est = 0.01
 
+                # Llamada al nuevo backtester
                 df_res, min_p, max_p, meta = tester.run_simulation(
-                    history, inversion, sd_mult_lab, 
+                    history_data, inversion, sd_mult_lab, 
                     sim_days=dias_sim, vol_days=vol_days_lab, 
                     fee_tier=fee_est, auto_rebalance=auto_rebalance
                 )
                 
                 if df_res is not None and not df_res.empty:
-                    # Resultados
                     last = df_res.iloc[-1]
                     roi_v3 = (last['Valor Total'] - inversion) / inversion
                     roi_hodl = (last['HODL Value'] - inversion) / inversion
                     
+                    # Resultados
                     k1, k2, k3 = st.columns(3)
                     k1.metric("Valor Final V3", f"${last['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
                     k2.metric("Valor HODL", f"${last['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
-                    k3.metric("Fees Generados", f"${last['Fees Acum']:,.2f}")
+                    k3.metric("Fees Totales", f"${last['Fees Acum']:,.2f}")
                     
                     if auto_rebalance: st.info(f"🔄 **{meta['rebalances']} rebalanceos** realizados.")
                     
-                    # Info Rango
                     p_ini = df_res.iloc[0]['Price']
                     w_pct = meta['initial_range_width_pct'] * 100
                     st.info(f"**Rango Inicial:** ±{w_pct:.1f}%. Entrada: {p_ini:.4f}. Límites: {min_p:.4f} - {max_p:.4f}")
                     
                     # Gráficos
+                    st.subheader("💰 Rendimiento")
                     fig1 = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
-                                   title="Rendimiento Acumulado")
+                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"})
                     st.plotly_chart(fig1, use_container_width=True)
                     
+                    st.subheader("📊 Precio y Rangos")
                     df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
                     df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
                     
                     fig2 = px.scatter(df_res, x='Date', y='Price', color='Estado',
                                       color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
-                                      hover_data={'Ancho Rango': True}, title="Precio vs Rango")
+                                      hover_data={'Ancho Rango': True})
                     fig2.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
                     
                     if not auto_rebalance:
