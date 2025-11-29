@@ -61,7 +61,7 @@ class Backtester:
     def run_simulation(self, history, investment_usd, sd_multiplier, sim_days=30, vol_days=7, fee_tier=0.003, auto_rebalance=False):
         if not history: return None
         
-        # 1. Preparar Datos (Buffer + Simulación)
+        # 1. Preparar Datos
         total_samples = (sim_days + vol_days) * 3
         full_history_chrono = history[:total_samples][::-1]
         
@@ -71,7 +71,7 @@ class Backtester:
 
         sim_start_idx = max(min_warmup_samples, len(full_history_chrono) - (sim_days * 3))
         
-        # --- 2. Inicialización (Momento T=0 de la simulación) ---
+        # --- 2. Inicialización ---
         start_point = full_history_chrono[sim_start_idx]
         
         p_base_usd_0 = start_point.get('priceUsd', 0)
@@ -82,23 +82,14 @@ class Backtester:
         # A. Calcular Rango Inicial
         range_width_pct, initial_vol = self._calculate_dynamic_range(full_history_chrono, sim_start_idx, vol_days, sd_multiplier)
         
-        # CÁLCULO DE EFICIENCIA (TU FÓRMULA)
-        full_amplitude = range_width_pct * 2
-        if full_amplitude > 0:
-            efficiency_mult = 1 / full_amplitude
-        else:
-            efficiency_mult = 1.0
-        
-        efficiency_mult = min(efficiency_mult, 100.0)
-
         lower_price = p_native_0 * (1 - range_width_pct)
         upper_price = p_native_0 * (1 + range_width_pct)
         
-        # GUARDAMOS LOS LÍMITES INICIALES
+        # Guardamos límites iniciales
         initial_min_p = lower_price
         initial_max_p = upper_price
         
-        # B. Comprar Liquidez Inicial
+        # B. Comprar Liquidez
         liquidity, hodl_x, hodl_y = self._calculate_liquidity_and_amounts(
             investment_usd, p_native_0, p_base_usd_0, lower_price, upper_price
         )
@@ -124,26 +115,17 @@ class Backtester:
             in_range = lower_price <= p_native_t <= upper_price
             
             if auto_rebalance and not in_range:
-                # 1. Valor residual
                 ax, ay = self.math.calculate_amounts(liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price))
                 curr_val_usd = (ax * p_base_usd_t) + (ay * p_quote_usd_t)
                 
-                # 2. Penalización swap
-                current_principal_usd = curr_val_usd * 0.997
+                current_principal_usd = curr_val_usd * 0.997 # Coste swap
                 
-                # 3. Recalcular Rango Dinámico
                 new_width_pct, _ = self._calculate_dynamic_range(full_history_chrono, i, vol_days, sd_multiplier)
                 range_width_pct = new_width_pct 
-                
-                # Recalcular eficiencia
-                full_amplitude = range_width_pct * 2
-                efficiency_mult = 1 / full_amplitude if full_amplitude > 0 else 1.0
-                efficiency_mult = min(efficiency_mult, 100.0)
 
                 lower_price = p_native_t * (1 - range_width_pct)
                 upper_price = p_native_t * (1 + range_width_pct)
                 
-                # 4. Recomprar
                 liquidity, _, _ = self._calculate_liquidity_and_amounts(
                     current_principal_usd, p_native_t, p_base_usd_t, lower_price, upper_price
                 )
@@ -156,7 +138,7 @@ class Backtester:
             )
             val_pos_usd = (curr_x * p_base_usd_t) + (curr_y * p_quote_usd_t)
             
-            # --- C. Fees (Con Multiplicador y Normalización) ---
+            # --- C. Fees (SIN Multiplicador) ---
             apr_snapshot = snap.get('apr', 0)
             fees_earned_period = 0.0
             
@@ -164,10 +146,8 @@ class Backtester:
                 # 1. Yield Base Normalizado (APR / 1095)
                 base_period_yield = (float(apr_snapshot) / 100.0) / 1095.0
                 
-                # 2. Aplicar Multiplicador E = 1 / ancho
-                real_period_yield = base_period_yield * efficiency_mult
-                
-                fees_earned_period = val_pos_usd * real_period_yield
+                # NO aplicamos multiplicador. Usamos el APR tal cual.
+                fees_earned_period = val_pos_usd * base_period_yield
                 accumulated_fees_usd += fees_earned_period
             
             # --- D. HODL ---
@@ -192,7 +172,7 @@ class Backtester:
             "initial_volatility": initial_vol,
             "rebalances": rebalance_count,
             "initial_range_width_pct": range_width_pct,
-            "avg_efficiency": efficiency_mult
+            "avg_efficiency": 1.0 # Mantenemos la clave por compatibilidad con app.py
         }
             
         return pd.DataFrame(results), initial_min_p, initial_max_p, metadata
