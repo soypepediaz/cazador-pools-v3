@@ -66,7 +66,6 @@ class MarketScanner:
         margen = probable_yield - il_loss_at_limit
         
         # Ratio Beneficio / Riesgo (Nuevo)
-        # Evitamos división por cero si el riesgo es muy bajo
         riesgo_safe = max(il_loss_at_limit, 0.0001)
         ratio_br = probable_yield / riesgo_safe
         
@@ -102,14 +101,14 @@ class MarketScanner:
             f"APR ({days_window}d)": apr_promedio_anual,
             "Volatilidad": vol_annual * 100.0,
             "Rango Est.": range_width_pct * 100.0,
-            "Prob. Rango": prob_in_range * 100.0,
             "Est. Fees": probable_yield * 100.0,
-            "Max IL": il_loss_at_limit * 100.0,
-            "Ratio F/R": ratio_br,  # Nuevo indicador para ordenar
+            "IL": il_loss_at_limit * 100.0,        # Renombrado de Max IL a IL
+            "Ratio F/IL": ratio_br,                # Renombrado de Ratio F/R
             "Margen": margen * 100.0
         }
 
     def analyze_single_pool(self, address, days_window=7, sd_multiplier=1.0):
+        """Analiza un pool específico dada su dirección (0x...)."""
         pool_detail = self.data.get_pool_history(address)
         if not pool_detail: return pd.DataFrame()
         
@@ -119,22 +118,48 @@ class MarketScanner:
             return pd.DataFrame([result])
         return pd.DataFrame()
 
-    def scan(self, chain_filter, min_tvl, days_window=7, sd_multiplier=1.0):
+    def scan(self, target_chains, min_tvl, days_window, sd_multiplier, min_apr, selected_assets, custom_asset=None):
+        """
+        Escanea múltiples pools aplicando filtros avanzados.
+        target_chains: Lista de cadenas (ej: ['ethereum', 'arbitrum']) o vacía para todas.
+        selected_assets: Lista de activos (ej: ['BTC', 'ETH']).
+        custom_asset: Nombre de activo personalizado.
+        """
         raw_pools = self.data.get_all_pools()
         candidates = []
         
-        # 1. Filtrado inicial rápido
+        # Normalizar activos para búsqueda
+        assets_to_search = [a.upper() for a in selected_assets if a != "Otro"]
+        if custom_asset:
+            assets_to_search.append(custom_asset.upper())
+            
         for p in raw_pools:
-            if p.get('ChainId') == chain_filter:
-                try: tvl = float(p.get('Liquidity', 0))
-                except: tvl = 0
-                if tvl >= min_tvl: candidates.append(p)
+            # 1. Filtro Red
+            p_chain = p.get('ChainId')
+            if target_chains and p_chain not in target_chains:
+                continue
+                
+            # 2. Filtro TVL
+            try: tvl = float(p.get('Liquidity', 0))
+            except: tvl = 0
+            if tvl < min_tvl: continue
+            
+            # 3. Filtro Activos (Si hay seleccionados)
+            if assets_to_search:
+                base = str(p.get('BaseToken', '')).upper()
+                quote = str(p.get('QuoteToken', '')).upper()
+                # Debe contener AL MENOS UNO de los activos buscados
+                found = False
+                for asset in assets_to_search:
+                    if asset in base or asset in quote:
+                        found = True
+                        break
+                if not found: continue
+
+            candidates.append(p)
         
-        # AHORA NO LIMITAMOS A 20 AQUÍ. Procesamos todos los candidatos que cumplan el TVL.
-        # Pero si hay muchísimos (>100), podríamos tener problemas de tiempo de espera de la API.
-        # Vamos a poner un límite razonable de 100 para no saturar, pero priorizando por Volumen.
-        
-        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:100]
+        # Priorizar por Volumen para analizar primero los más líquidos
+        candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:150] # Analizamos 150 max
         
         results = []
         for pool in candidates:
@@ -143,15 +168,20 @@ class MarketScanner:
 
             pool_detail = self.data.get_pool_history(address)
             result = self._process_pool_data(pool_detail, days_window, sd_multiplier)
+            
             if result:
+                # 4. Filtro APR Mínimo (Sobre el calculado real)
+                apr_calc = result.get(f"APR ({days_window}d)", 0) * 100
+                if apr_calc < min_apr: continue
+                
                 result['Address'] = address
                 results.append(result)
-        
+            
         # Convertimos a DataFrame
         df = pd.DataFrame(results)
         
         if not df.empty:
-            # Ordenamos por Ratio Beneficio/Riesgo (Calidad) y nos quedamos con los TOP 50
-            df = df.sort_values(by="Ratio F/R", ascending=False).head(50)
+            # Ordenar por TVL y devolver Top 100
+            df = df.sort_values(by="TVL", ascending=False).head(100)
             
         return df
