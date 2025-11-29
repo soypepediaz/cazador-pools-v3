@@ -1,14 +1,11 @@
 from web3 import Web3
+from eth_account.messages import encode_defunct
 
 # --- CONFIGURACIÓN ---
-# RPC Público de Arbitrum One
 ARBITRUM_RPC = "https://arb1.arbitrum.io/rpc"
+# Contrato NFT (Ejemplo: Arbitrum Odyssey) - CÁMBIALO POR EL TUYO
+NFT_CONTRACT_ADDRESS = "0xfae39ec09230af339877e09549438c436022207c" 
 
-# Dirección del contrato NFT que da acceso (Ejemplo: Arbitrum Odyssey o tu colección)
-# CÁMBIALO POR TU CONTRATO
-NFT_CONTRACT_ADDRESS = "0xF4820467171695F4d2760614C77503147A9CB1E8" 
-
-# ABI Mínimo para consultar saldo (balanceOf) de un ERC-721
 ERC721_ABI = [
     {
         "constant": True,
@@ -19,38 +16,41 @@ ERC721_ABI = [
     }
 ]
 
+def verify_signature(address, signature, message_text="Acceso a Cazador V3"):
+    """
+    Recupera la dirección que firmó el mensaje y comprueba si coincide.
+    """
+    try:
+        w3 = Web3()
+        # Codificar el mensaje según el estándar EIP-191
+        message_encoded = encode_defunct(text=message_text)
+        
+        # Recuperar la dirección pública del firmante
+        signer = w3.eth.account.recover_message(message_encoded, signature=signature)
+        
+        return signer.lower() == address.lower()
+    except Exception as e:
+        print(f"Error firma: {e}")
+        return False
+
 def check_access(user_address):
     """
-    Verifica si una dirección tiene al menos 1 NFT de la colección requerida.
-    Retorna: (Bool: Acceso, String: Mensaje)
+    Verifica saldo NFT en Arbitrum.
     """
-    if not user_address:
-        return False, "Por favor, introduce una dirección."
+    if not user_address: return False, "Dirección vacía"
     
     try:
-        # 1. Conectar a Arbitrum
         w3 = Web3(Web3.HTTPProvider(ARBITRUM_RPC))
+        if not w3.is_connected(): return False, "Error conexión RPC"
         
-        if not w3.is_connected():
-            return False, "Error de conexión con la red Arbitrum."
+        checksum_addr = w3.to_checksum_address(user_address)
+        contract_addr = w3.to_checksum_address(NFT_CONTRACT_ADDRESS)
+        contract = w3.eth.contract(address=contract_addr, abi=ERC721_ABI)
         
-        # 2. Validar dirección (Checksum)
-        if not w3.is_address(user_address):
-            return False, "Dirección de billetera no válida."
-        
-        checksum_address = w3.to_checksum_address(user_address)
-        contract_address = w3.to_checksum_address(NFT_CONTRACT_ADDRESS)
-        
-        # 3. Instanciar contrato
-        contract = w3.eth.contract(address=contract_address, abi=ERC721_ABI)
-        
-        # 4. Consultar saldo
-        balance = contract.functions.balanceOf(checksum_address).call()
+        balance = contract.functions.balanceOf(checksum_addr).call()
         
         if balance > 0:
-            return True, f"¡Acceso concedido! Tienes {balance} NFT(s)."
-        else:
-            return False, "Acceso denegado. No posees el NFT requerido en Arbitrum."
-            
+            return True, f"¡Holder verificado! Tienes {balance} NFT(s)."
+        return False, "No tienes el NFT requerido."
     except Exception as e:
-        return False, f"Error técnico: {str(e)}"
+        return False, f"Error verificando NFT: {str(e)}"
