@@ -40,7 +40,7 @@ def go_to_lab(pool_row):
 # 1. INICIO
 # ==========================================
 if st.session_state.step == 'home':
-    st.title("🦄 Cazador de Oportunidades Uniswap V3")
+    st.title("🏹 Cazador de Oportunidades en (mucho)pools")
     st.markdown("---")
     
     c1, c2, c3 = st.columns([1, 3, 1])
