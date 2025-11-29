@@ -7,7 +7,7 @@ from uni_v3_kit.backtester import Backtester
 
 st.set_page_config(page_title="Cazador V3", layout="wide", initial_sidebar_state="collapsed")
 
-# --- ESTILOS CSS (UI Limpia) ---
+# --- ESTILOS CSS ---
 st.markdown("""
 <style>
     [data-testid="stSidebar"] {display: none;}
@@ -37,7 +37,7 @@ def go_to_lab(pool_row):
     st.session_state.step = 'lab'
 
 # ==========================================
-# 1. PANTALLA DE INICIO (WIZARD)
+# 1. PANTALLA DE INICIO
 # ==========================================
 if st.session_state.step == 'home':
     st.title("🦄 Cazador de Oportunidades Uniswap V3")
@@ -107,7 +107,6 @@ if st.session_state.step == 'home':
                         )
                         
                         if not df.empty:
-                            # Guardamos parámetros para usarlos en el lab y en la visualización
                             st.session_state.scan_params = {'dias': dias_window, 'sd': sd_mult}
                             go_to_results(df)
                             st.rerun()
@@ -177,10 +176,12 @@ elif st.session_state.step == 'results':
             col_apr: st.column_config.NumberColumn(format="%.1f%%"),
             "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
             "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
-            # COLUMNAS NUEVAS DE TU ESTRATEGIA
+            
+            # COLUMNAS NUEVAS CORRECTAS
             "Est. Fees": st.column_config.NumberColumn(f"Fees Prob.", format="%.2f%%", help="Fees ajustadas por probabilidad"),
             "IL": st.column_config.NumberColumn("IL (Riesgo)", format="%.2f%%", help="Pérdida IL si sale de rango"),
             "Ratio F/IL": st.column_config.NumberColumn("Ratio F/IL", format="%.2f", help="Mayor es mejor"),
+            
             # Ocultamos columnas técnicas
             "Margen": None
         }
@@ -210,10 +211,7 @@ elif st.session_state.step == 'results':
 elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
     
-    # Botón volver a resultados
-    if st.button("⬅️ Volver a Resultados"):
-        st.session_state.step = 'results'
-        st.rerun()
+    st.button("⬅️ Volver a Resultados", on_click=lambda: setattr(st.session_state, 'step', 'results'))
     
     st.title(f"🧪 Lab: {pool['Par']}")
     
@@ -223,8 +221,7 @@ elif st.session_state.step == 'lab':
     c1.metric("Red / DEX", f"{pool['Red']} / {pool['DEX']}")
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
     
-    # Visual APR Fix
-    val_apr = pool[col_apr_lab] * 100
+    val_apr = pool[col_apr_lab] * 100 
     c3.metric("APR Medio", f"{val_apr:.1f}%")
     c4.metric("Ratio F/IL", f"{pool.get('Ratio F/IL', 0):.2f}")
     
@@ -258,10 +255,10 @@ elif st.session_state.step == 'lab':
                 history_data = provider.get_pool_history(address).get('history', [])
                 
                 fee_est = 0.003 
-                # Intento de deducir fee tier del nombre si es posible
                 if "0.05%" in str(pool['Par']): fee_est = 0.0005
                 elif "0.01%" in str(pool['Par']): fee_est = 0.0001
                 elif "1%" in str(pool['Par']): fee_est = 0.01
+                elif "0.3%" in str(pool['Par']): fee_est = 0.003
 
                 # Llamada al nuevo backtester
                 df_res, min_p, max_p, meta = tester.run_simulation(
@@ -290,7 +287,8 @@ elif st.session_state.step == 'lab':
                     # Gráficos
                     st.subheader("💰 Rendimiento")
                     fig1 = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"})
+                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
+                                   title="Rendimiento Acumulado")
                     st.plotly_chart(fig1, use_container_width=True)
                     
                     st.subheader("📊 Precio y Rangos")
@@ -313,6 +311,20 @@ elif st.session_state.step == 'lab':
                     
                     with st.expander("Ver Tabla Detallada"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
-                        st.dataframe(df_res[cols])
+                        st.dataframe(
+                            df_res[cols],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Date": st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY HH:mm"),
+                                "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
+                                "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
+                                "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
+                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.2f %%"),
+                                "APR Period": st.column_config.NumberColumn("APR Anual (Inst.)", format="%.2f%%"),
+                                "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"),
+                                "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
+                            }
+                        )
 
                 else: st.error("Datos insuficientes.")
