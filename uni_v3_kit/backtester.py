@@ -83,14 +83,12 @@ class Backtester:
         range_width_pct, initial_vol = self._calculate_dynamic_range(full_history_chrono, sim_start_idx, vol_days, sd_multiplier)
         
         # --- CÁLCULO DE EFICIENCIA (TU FÓRMULA) ---
-        # Amplitud Total = range_width_pct * 2 (ej: ±5.5% -> 11% total)
         full_amplitude = range_width_pct * 2
         if full_amplitude > 0:
             efficiency_mult = 1 / full_amplitude
         else:
             efficiency_mult = 1.0
         
-        # Cap de seguridad (ej: no más de 100x)
         efficiency_mult = min(efficiency_mult, 100.0)
 
         lower_price = p_native_0 * (1 - range_width_pct)
@@ -158,13 +156,15 @@ class Backtester:
             )
             val_pos_usd = (curr_x * p_base_usd_t) + (curr_y * p_quote_usd_t)
             
-            # --- C. Fees (Con Multiplicador) ---
+            # --- C. Fees (Con Multiplicador y Normalización) ---
             apr_snapshot = snap.get('apr', 0)
             fees_earned_period = 0.0
             
             if in_range and apr_snapshot:
-                # 1. Yield Base (API) / Periodos (1095)
-                base_period_yield = (float(apr_snapshot) / 100.0) / (365.0 * 3.0)
+                # 1. Yield Base Normalizado
+                # APR (porcentaje) -> Decimal (0.50)
+                # Dividimos por 365 días y luego por 3 (periodos de 8h) = 1095
+                base_period_yield = (float(apr_snapshot) / 100.0) / 1095.0
                 
                 # 2. Aplicar Multiplicador E = 1 / ancho
                 real_period_yield = base_period_yield * efficiency_mult
@@ -180,7 +180,7 @@ class Backtester:
                 "Price": p_native_t,
                 "Range Min": lower_price,
                 "Range Max": upper_price,
-                "Range Width %": range_width_pct * 100,
+                "Range Width %": range_width_pct * 100, 
                 "In Range": in_range,
                 "APR Period": float(apr_snapshot) if apr_snapshot else 0.0,
                 "Fees Period": fees_earned_period,
@@ -194,8 +194,7 @@ class Backtester:
             "initial_volatility": initial_vol,
             "rebalances": rebalance_count,
             "initial_range_width_pct": range_width_pct,
-            "avg_efficiency": efficiency_mult # Se pasa al frontend
+            "avg_efficiency": efficiency_mult
         }
             
-        # Retorno de 4 valores (DataFrame, Min, Max, Meta)
         return pd.DataFrame(results), initial_min_p, initial_max_p, metadata
