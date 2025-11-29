@@ -59,27 +59,17 @@ class Backtester:
     def run_simulation(self, history, investment_usd, sd_multiplier, sim_days=30, vol_days=7, fee_tier=0.003, auto_rebalance=False):
         if not history: return None
         
-        # 1. PREPARACIÓN DE DATOS
-        # Invertimos la historia para tenerla cronológica (Viejo -> Nuevo)
-        # history original: [Hoy, Ayer, Anteayer...] -> full_history: [Anteayer, Ayer, Hoy...]
-        full_history_chrono = history[::-1]
+        # 1. Preparar Datos
+        total_samples = (sim_days + vol_days) * 3
+        full_history_chrono = history[:total_samples][::-1]
         
-        # Calculamos cuántos snapshots necesitamos en total (simulación + calentamiento volatilidad)
-        total_snapshots_needed = (sim_days + vol_days) * 3
-        
-        # Si tenemos más datos de los necesarios, cortamos para quedarnos con los últimos X días
-        if len(full_history_chrono) > total_snapshots_needed:
-            full_history_chrono = full_history_chrono[-total_snapshots_needed:]
-            
-        # Validamos que tengamos mínimo para la ventana de volatilidad
         min_warmup_samples = vol_days * 3
         if len(full_history_chrono) < min_warmup_samples + 1:
             return None
 
-        # El índice de inicio de simulación es justo después del periodo de calentamiento
         sim_start_idx = min_warmup_samples
         
-        # --- 2. INICIALIZACIÓN (Día 0 de la simulación) ---
+        # --- 2. Inicialización ---
         start_point = full_history_chrono[sim_start_idx]
         
         p_base_usd_0 = start_point.get('priceUsd', 0)
@@ -90,16 +80,14 @@ class Backtester:
         # A. Calcular Rango Inicial
         range_width_pct, initial_vol = self._calculate_dynamic_range(full_history_chrono, sim_start_idx, vol_days, sd_multiplier)
         
-        # NO HAY CÁLCULO DE EFICIENCIA AQUÍ. SE USA APR DIRECTO.
-
         lower_price = p_native_0 * (1 - range_width_pct)
         upper_price = p_native_0 * (1 + range_width_pct)
         
-        # Guardamos límites iniciales para devolverlos
+        # Guardamos límites iniciales
         initial_min_p = lower_price
         initial_max_p = upper_price
         
-        # B. Comprar Liquidez Inicial
+        # B. Comprar Liquidez
         liquidity, hodl_x, hodl_y = self._calculate_liquidity_and_amounts(
             investment_usd, p_native_0, p_base_usd_0, lower_price, upper_price
         )
@@ -110,7 +98,7 @@ class Backtester:
         
         results = []
         
-        # --- 3. BUCLE DE SIMULACIÓN ---
+        # --- 3. Bucle de Simulación ---
         for i in range(sim_start_idx, len(full_history_chrono)):
             snap = full_history_chrono[i]
             
@@ -125,44 +113,40 @@ class Backtester:
             in_range = lower_price <= p_native_t <= upper_price
             
             if auto_rebalance and not in_range:
-                # Valor residual (Mark-to-Market)
                 ax, ay = self.math.calculate_amounts(liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price))
                 curr_val_usd = (ax * p_base_usd_t) + (ay * p_quote_usd_t)
                 
-                # Penalización swap 0.3%
-                current_principal_usd = curr_val_usd * 0.997
+                current_principal_usd = curr_val_usd * 0.997 # Coste swap
                 
-                # Nuevo Rango Dinámico
                 new_width_pct, _ = self._calculate_dynamic_range(full_history_chrono, i, vol_days, sd_multiplier)
                 range_width_pct = new_width_pct 
 
                 lower_price = p_native_t * (1 - range_width_pct)
                 upper_price = p_native_t * (1 + range_width_pct)
                 
-                # Recomprar Liquidez
                 liquidity, _, _ = self._calculate_liquidity_and_amounts(
                     current_principal_usd, p_native_t, p_base_usd_t, lower_price, upper_price
                 )
                 rebalance_count += 1
                 in_range = True
             
-            # --- B. Valoración (Mark-to-Market) ---
+            # --- B. Valoración ---
             curr_x, curr_y = self.math.calculate_amounts(
                 liquidity, math.sqrt(p_native_t), math.sqrt(lower_price), math.sqrt(upper_price)
             )
             val_pos_usd = (curr_x * p_base_usd_t) + (curr_y * p_quote_usd_t)
             
-            # --- C. Fees (CÁLCULO LITERAL) ---
+            # --- C. Fees (SIN MULTIPLICADOR) ---
             apr_snapshot = snap.get('apr', 0)
             fees_earned_period = 0.0
             
             if in_range and apr_snapshot:
-                # APR Base del API (ej: 88.5) -> 0.885
-                # Dividimos por 1095 (365 días * 3 periodos/día)
-                # NO hay multiplicadores extra.
-                base_period_yield = (float(apr_snapshot) / 100.0) / 1095.0
+                # APR Anual (ej: 88.49) -> Decimal (0.8849)
+                # Dividimos por 1095 (Periodos de 8h en un año)
+                yield_period_8h = (float(apr_snapshot) / 100.0) / 1095.0
                 
-                fees_earned_period = val_pos_usd * base_period_yield
+                # Cálculo simple: Capital Actual * Yield del Periodo
+                fees_earned_period = val_pos_usd * yield_period_8h
                 accumulated_fees_usd += fees_earned_period
             
             # --- D. HODL ---
@@ -187,7 +171,7 @@ class Backtester:
             "initial_volatility": initial_vol,
             "rebalances": rebalance_count,
             "initial_range_width_pct": range_width_pct,
-            "avg_efficiency": 1.0 # Valor dummy para compatibilidad
+            "avg_efficiency": 1.0
         }
             
         return pd.DataFrame(results), initial_min_p, initial_max_p, metadata
