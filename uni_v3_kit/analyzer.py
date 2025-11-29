@@ -10,13 +10,14 @@ class MarketScanner:
 
     def _calculate_probability_in_range(self, sd_multiplier):
         """Calcula probabilidad de estar en rango (distribución normal)"""
+        # sd_multiplier = 1.0 -> ~0.68
         return math.erf(sd_multiplier / math.sqrt(2))
 
     def _process_pool_data(self, pool_detail, days_window, sd_multiplier=1.0):
         """Procesa datos de un pool y devuelve métricas clave."""
         history = pool_detail.get('history', [])
         
-        # Mínimo de historia para volatilidad fiable
+        # Necesitamos historial suficiente para calcular volatilidad
         min_history_days = max(days_window, 30)
         recent_data = history[:min_history_days * 3] if history else []
         
@@ -32,7 +33,7 @@ class MarketScanner:
         else:
             apr_promedio_anual = 0.0
 
-        # --- 2. Volatilidad ---
+        # --- 2. Volatilidad Real (Anualizada) ---
         prices = []
         for x in recent_data:
             p_native = x.get('priceNative')
@@ -44,29 +45,32 @@ class MarketScanner:
         
         vol_annual = self.math.calculate_realized_volatility(prices)
         
-        # --- 3. Rango y Probabilidad ---
+        # --- 3. Rango Estimado y Probabilidad ---
+        # Rango = Volatilidad * Raíz(Tiempo) * SD
         time_scaling = math.sqrt(days_window / 365.0)
         range_width_pct = vol_annual * time_scaling * sd_multiplier
-        range_width_pct = max(0.005, min(range_width_pct, 2.0))
+        range_width_pct = max(0.005, min(range_width_pct, 2.0)) # Safety caps
 
         prob_in_range = self._calculate_probability_in_range(sd_multiplier)
 
-        # --- 4. Proyección: Fees Probables vs IL ---
+        # --- 4. Proyección: Fees vs IL ---
         
-        # Fees Totales Teóricas
+        # A. Fees Totales Teóricas (Si nunca sale del rango)
         total_yield_theoretical = apr_promedio_anual * (days_window / 365.0)
         
-        # Fees Probables (Ajustadas por probabilidad)
+        # B. Fees Probables (Ajustadas por la probabilidad estadística de mantenerse dentro)
         probable_yield = total_yield_theoretical * prob_in_range
         
-        # Costo IL (Riesgo de Ruptura)
+        # C. Riesgo de Salida (Max IL)
+        # Usamos la función de math_core que simula la pérdida real de V3 al tocar el límite
         il_loss_at_limit = self.math.calculate_v3_il_at_limit(range_width_pct)
         
         # --- 5. Métricas de Decisión ---
-        # Margen Neto
+        # Margen Neto (Ganancia probable - Pérdida potencial)
         margen = probable_yield - il_loss_at_limit
         
-        # Ratio Beneficio / Riesgo (Nuevo nombre)
+        # Ratio Beneficio / Riesgo
+        # Evitamos división por cero
         riesgo_safe = max(il_loss_at_limit, 0.0001)
         ratio_br = probable_yield / riesgo_safe
         
@@ -86,6 +90,7 @@ class MarketScanner:
         dex_id = str(pool_detail.get('DexId', 'Unknown')).capitalize().replace("-v3", "").replace(" v3", "")
         chain_id = str(pool_detail.get('ChainId', 'Unknown')).capitalize()
         
+        # TVL con Fallback
         tvl = float(pool_detail.get('Liquidity', 0) or 0)
         if tvl == 0 and history:
             for snap in history:
@@ -100,17 +105,16 @@ class MarketScanner:
             "DEX": dex_id,
             "TVL": tvl,
             f"APR ({days_window}d)": apr_promedio_anual,
-            "Volatilidad": vol_annual * 100.0,
-            "Rango Est.": range_width_pct * 100.0,
-            # "Prob. Rango": Eliminado por solicitud
-            "Est. Fees": probable_yield * 100.0,
-            "IL": il_loss_at_limit * 100.0,        # Renombrado de Max IL a IL
-            "Ratio F/IL": ratio_br,                # Renombrado de Ratio F/R
-            "Margen": margen * 100.0
+            "Volatilidad": vol_annual * 100.0,      # %
+            "Rango Est.": range_width_pct * 100.0,  # %
+            # "Prob. Rango": prob_in_range * 100.0, # Eliminado
+            "Est. Fees": probable_yield * 100.0,    # %
+            "IL": il_loss_at_limit * 100.0,         # % (Renombrado de Max IL)
+            "Ratio F/IL": ratio_br,                 # Ratio numérico
+            "Margen": margen * 100.0                # %
         }
 
     def analyze_single_pool(self, address, days_window=7, sd_multiplier=1.0):
-        """Analiza un pool específico dada su dirección (0x...)."""
         pool_detail = self.data.get_pool_history(address)
         if not pool_detail: return pd.DataFrame()
         
@@ -121,16 +125,10 @@ class MarketScanner:
         return pd.DataFrame()
 
     def scan(self, target_chains, min_tvl, days_window, sd_multiplier, min_apr, selected_assets, custom_asset=None):
-        """
-        Escanea múltiples pools aplicando filtros avanzados.
-        target_chains: Lista de cadenas (ej: ['ethereum', 'arbitrum']) o vacía para todas.
-        selected_assets: Lista de activos (ej: ['BTC', 'ETH']).
-        custom_asset: Nombre de activo personalizado.
-        """
         raw_pools = self.data.get_all_pools()
         candidates = []
         
-        # Preparar lista de búsqueda de activos (normalizada a mayúsculas)
+        # Preparar búsqueda de activos
         assets_to_search = []
         if selected_assets:
             assets_to_search = [a.upper() for a in selected_assets if a != "Otro"]
@@ -138,8 +136,7 @@ class MarketScanner:
             assets_to_search.append(custom_asset.upper())
             
         for p in raw_pools:
-            # 1. Filtro Red (Si la lista no está vacía y no contiene 'Todas')
-            # Nota: Desde app enviaremos lista vacía si el usuario quiere 'Todas'
+            # 1. Filtro Red
             p_chain = p.get('ChainId')
             if target_chains and p_chain not in target_chains:
                 continue
@@ -149,11 +146,10 @@ class MarketScanner:
             except: tvl = 0
             if tvl < min_tvl: continue
             
-            # 3. Filtro Activos (Si hay seleccionados)
+            # 3. Filtro Activos
             if assets_to_search:
                 base = str(p.get('BaseToken', '')).upper()
                 quote = str(p.get('QuoteToken', '')).upper()
-                # Debe contener AL MENOS UNO de los activos buscados
                 found = False
                 for asset in assets_to_search:
                     if asset in base or asset in quote:
@@ -163,8 +159,7 @@ class MarketScanner:
 
             candidates.append(p)
         
-        # Priorizar por Volumen para analizar primero los más líquidos
-        # Aumentamos el límite de pre-candidatos para tener margen tras el filtro de APR
+        # Priorizar por Volumen
         candidates = sorted(candidates, key=lambda x: float(x.get('Volume', 0)), reverse=True)[:150]
         
         results = []
@@ -173,23 +168,19 @@ class MarketScanner:
             if not address: address = pool.get('_id') 
 
             pool_detail = self.data.get_pool_history(address)
-            
             result = self._process_pool_data(pool_detail, days_window, sd_multiplier)
             
             if result:
-                # 4. Filtro APR Mínimo (Sobre el calculado real del periodo analizado)
-                # El result tiene el APR en formato decimal 0.50, multiplicamos por 100 para comparar con input usuario (10%)
+                # 4. Filtro APR Mínimo
                 apr_calc = result.get(f"APR ({days_window}d)", 0) * 100
-                
                 if apr_calc >= min_apr:
                     result['Address'] = address
                     results.append(result)
             
-        # Convertimos a DataFrame
         df = pd.DataFrame(results)
         
         if not df.empty:
-            # Ordenar por TVL descendente y devolver Top 100
-            df = df.sort_values(by="TVL", ascending=False).head(100)
+            # Ordenar por Ratio F/IL descendente y devolver Top 100
+            df = df.sort_values(by="Ratio F/IL", ascending=False).head(100)
             
         return df
