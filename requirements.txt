@@ -5,3 +5,5 @@ streamlit
 plotly
 web3
 streamlit-javascript
+eth-account
+python-dotenv
