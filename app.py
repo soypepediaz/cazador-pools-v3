@@ -1,13 +1,24 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import importlib
 import time
 from streamlit_javascript import st_javascript
 
 # --- IMPORTACIONES ---
-# Streamlit recarga automáticamente los módulos si cambian, no hace falta forzarlo manualmente
-# a menos que estés editando librerías en caliente, lo cual no es recomendable en producción.
 try:
+    import uni_v3_kit.analyzer
+    import uni_v3_kit.data_provider
+    import uni_v3_kit.backtester
+    import uni_v3_kit.math_core
+    import uni_v3_kit.nft_gate
+
+    importlib.reload(uni_v3_kit.math_core)
+    importlib.reload(uni_v3_kit.analyzer)
+    importlib.reload(uni_v3_kit.data_provider)
+    importlib.reload(uni_v3_kit.backtester)
+    importlib.reload(uni_v3_kit.nft_gate)
+
     from uni_v3_kit.analyzer import MarketScanner
     from uni_v3_kit.data_provider import DataProvider
     from uni_v3_kit.backtester import Backtester
@@ -25,7 +36,6 @@ st.markdown("""
     .main .block-container {padding-top: 2rem; max-width: 1200px;}
     h1 {text-align: center; color: #FF4B4B; font-weight: 800;}
     .stButton button {width: 100%; border-radius: 8px; font-weight: bold; height: 3rem;}
-    div[data-testid="stMetricValue"] {font-size: 1.6rem; color: #31333F;}
     
     .login-container {
         max-width: 500px;
@@ -60,7 +70,7 @@ def go_to_lab(pool_row):
     st.session_state.step = 'lab'
 
 # ==========================================
-# 0. PANTALLA DE LOGIN (NFT GATE MEJORADO)
+# 0. PANTALLA DE LOGIN (NFT GATE)
 # ==========================================
 if not st.session_state.authenticated:
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -73,43 +83,54 @@ if not st.session_state.authenticated:
         </div>
         """, unsafe_allow_html=True)
         
-        js_code = """
+        # --- JS LOGIN SCRIPT ---
+        login_js = """
         async function login() {
+            console.log("Iniciando login...");
             try {
                 if (typeof window.ethereum === 'undefined') {
+                    console.error("No Metamask");
                     return "NO_WALLET";
                 }
+                
+                console.log("Solicitando cuentas...");
                 const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
                 const account = accounts[0];
+                console.log("Cuenta:", account);
                 
                 const msg = "Acceso a Cazador V3";
                 const msgHex = '0x' + Array.from(msg).map(c => c.charCodeAt(0).toString(16)).join('');
                 
+                console.log("Solicitando firma...");
                 const sig = await window.ethereum.request({
                     method: 'personal_sign',
                     params: [msgHex, account],
                 });
                 
+                console.log("Firma recibida");
                 return account + "|" + sig;
             } catch (e) {
+                console.error(e);
                 return "ERROR: " + e.message;
             }
         }
-        login().then(result => window.parent.postMessage({type: 'streamlit:setComponentValue', value: result}, '*'));
+        login().then(value => value);
         """
         
-        if st.button("🦊 Conectar Wallet y Firmar"):
-            with st.spinner("Esperando firma en Metamask..."):
-                result = st_javascript(js_code)
+        # Usamos una key dinámica para asegurar que el botón se pueda pulsar varias veces si falla
+        btn_key = f"btn_login_{int(time.time())}"
+        
+        if st.button("🦊 Conectar Wallet y Firmar", key="btn_real"):
+            with st.spinner("Abriendo Metamask..."):
+                result = st_javascript(login_js, key=btn_key)
                 
                 if result:
                     if result == "NO_WALLET":
-                        st.error("No se detectó Metamask.")
+                        st.error("No se detectó Metamask. Instala la extensión.")
                     elif str(result).startswith("ERROR"):
-                        st.error(f"Error: {result}")
+                        st.error(f"Error al conectar: {result}")
                     elif "|" in str(result):
                         addr, sig = str(result).split("|")
-                        
                         if verify_signature(addr, sig):
                             has_access, msg = check_access(addr)
                             if has_access:
@@ -122,7 +143,7 @@ if not st.session_state.authenticated:
                                 st.error(f"Acceso denegado: {msg}")
                         else:
                             st.error("Firma inválida.")
-                    elif result == 0: 
+                    elif result == 0:
                         pass 
 
     st.stop() 
@@ -150,7 +171,6 @@ if st.session_state.step == 'home':
         modo = st.radio("", ["🔍 Escanear Mercado (Búsqueda Avanzada)", "🎯 Analizar un Pool Específico (por contrato)"], label_visibility="collapsed")
         st.write("") 
         
-        # OPCIÓN A: ESCÁNER
         if modo == "🔍 Escanear Mercado (Búsqueda Avanzada)":
             with st.form("scanner_form"):
                 st.markdown("### ⚙️ Configuración del Escáner")
@@ -166,11 +186,10 @@ if st.session_state.step == 'home':
                 c_a, c_b = st.columns(2)
                 with c_a:
                     min_tvl = st.number_input("TVL Mínimo ($)", value=250000, step=50000)
-                    dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7, help="Días para calcular medias.")
-                
+                    dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7)
                 with c_b:
                     min_apr = st.number_input("APR Mínimo (%)", value=10.0, step=1.0)
-                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1, help="Amplitud para calcular el IL de salida.")
+                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0, step=0.1)
 
                 st.markdown("**Filtrar por Activos:**")
                 assets = ["BTC", "ETH", "SOL", "HYPE", "BNB", "Otro"]
@@ -208,7 +227,6 @@ if st.session_state.step == 'home':
                         else:
                             st.error("No se encontraron pools con esos criterios.")
 
-        # OPCIÓN B: MANUAL
         else: 
             with st.form("manual_form"):
                 st.markdown("### 🎯 Análisis Directo")
@@ -262,7 +280,10 @@ elif st.session_state.step == 'results':
     c1, c2 = st.columns([3, 1])
     with c1:
         df_d = df.reset_index(drop=True)
-        sel_idx = st.selectbox("Pool:", df_d.index, format_func=lambda i: f"{df_d.iloc[i]['Par']} ({df_d.iloc[i]['DEX']}) | Ratio: {df_d.iloc[i]['Ratio F/IL']:.2f}")
+        def format_option(idx):
+            row = df_d.iloc[idx]
+            return f"{row['Par']} ({row['DEX']} - {row['Red']}) | Ratio: {row['Ratio F/IL']:.2f}"
+        sel_idx = st.selectbox("Pool:", options=df_d.index, format_func=format_option)
     with c2:
         st.write(""); st.write("")
         if st.button("Ir al Laboratorio ➡️", use_container_width=True):
@@ -275,12 +296,13 @@ elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
     st.button("⬅️ Volver", on_click=lambda: setattr(st.session_state, 'step', 'results'))
     st.title(f"🧪 Lab: {pool['Par']}")
-    col_apr_lab = [c for c in pool.index if "APR (" in c][0]
     
+    col_apr_lab = [c for c in pool.index if "APR (" in c][0]
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("DEX", pool['DEX'])
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    c3.metric("APR", f"{pool[col_apr_lab]*100:.1f}%")
+    val_apr = pool[col_apr_lab] * 100
+    c3.metric("APR", f"{val_apr:.1f}%")
     c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
     
     st.markdown("---")
