@@ -4,3 +4,4 @@ pandas
 streamlit
 plotly
 web3
+streamlit-javascript
