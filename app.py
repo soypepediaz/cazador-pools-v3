@@ -5,8 +5,7 @@ import importlib
 import time
 import json
 
-# --- RECARGA DE MÓDULOS ---
-# Esto es vital para que pille los cambios en math_core y analyzer sin reiniciar el servidor
+# --- RECARGAS DE MÓDULOS ---
 import uni_v3_kit.analyzer
 import uni_v3_kit.data_provider
 import uni_v3_kit.backtester
@@ -34,13 +33,13 @@ st.markdown("""
     h1 {text-align: center; color: #FF4B4B; font-weight: 800;}
     .stButton button {width: 100%; border-radius: 8px; font-weight: bold; height: 3rem;}
     
-    .login-box {
-        max-width: 400px;
-        margin: 40px auto;
-        padding: 30px;
-        background: white;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    .login-container {
+        max-width: 500px;
+        margin: 50px auto;
+        padding: 2rem;
+        border-radius: 12px;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
         text-align: center;
     }
 </style>
@@ -67,46 +66,45 @@ def go_to_lab(pool_row):
     st.session_state.step = 'lab'
 
 # --- LÓGICA DE LOGIN (Captura de URL) ---
-# Esta parte lee los parámetros que nos manda el JS tras firmar
 params = st.query_params
 if not st.session_state.authenticated and "sig" in params and "addr" in params:
-    sig = params["sig"]
-    addr = params["addr"]
-    
-    # Limpiamos URL inmediatamente
-    st.query_params.clear()
-    
-    with st.spinner("Verificando firma en la blockchain..."):
-        if verify_signature(addr, sig):
-            has_access, msg = check_access(addr)
-            if has_access:
-                st.session_state.authenticated = True
-                st.session_state.wallet_address = addr
-                st.success(f"¡Bienvenido! {msg}")
-                time.sleep(1)
-                st.rerun()
+    try:
+        sig = params["sig"]
+        addr = params["addr"]
+        
+        st.query_params.clear()
+        
+        with st.spinner("Verificando credenciales..."):
+            if verify_signature(addr, sig):
+                has_access, msg = check_access(addr)
+                if has_access:
+                    st.session_state.authenticated = True
+                    st.session_state.wallet_address = addr
+                    st.success(f"¡Bienvenido! {msg}")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(f"Acceso denegado: {msg}")
             else:
-                st.error(f"Acceso denegado: {msg}")
-        else:
-            st.error("Firma inválida.")
+                st.error("Firma inválida.")
+    except Exception as e:
+        st.error(f"Error en login: {e}")
 
 # ==========================================
 # 0. PANTALLA DE LOGIN
 # ==========================================
 if not st.session_state.authenticated:
-    st.title("🔒 Acceso Token-Gated")
-    
-    c1, c2, c3 = st.columns([1, 2, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c2:
+        st.title("🔒 Acceso Token-Gated")
         st.markdown("""
-        <div class="login-box">
+        <div class="login-container">
             <h3>Conectar Wallet</h3>
             <p style="color: #666;">Firma gratuita para verificar tu NFT en <b>Arbitrum</b>.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # BOTÓN HTML PURO (Sin dependencias de Python)
-        # Esto ejecuta JS nativo en el navegador del usuario y redirige a la misma página con los datos en la URL
+        # BOTÓN HTML PURO
         components_html = """
         <html>
             <head>
@@ -115,7 +113,7 @@ if not st.session_state.authenticated:
                         background-color: #FF4B4B; color: white; border: none; 
                         padding: 14px 28px; border-radius: 8px; font-size: 16px; 
                         font-weight: bold; cursor: pointer; width: 100%;
-                        transition: background 0.3s;
+                        transition: background 0.3s; font-family: sans-serif;
                     }
                     button:hover { background-color: #ff3333; }
                     p { font-family: sans-serif; color: #666; text-align: center; margin-top: 10px; font-size: 14px; }
@@ -134,24 +132,21 @@ if not st.session_state.authenticated:
                     btn.addEventListener('click', async () => {
                         if (typeof window.ethereum === 'undefined') {
                             status.innerText = 'Error: No se detectó Metamask. Instala la extensión.';
-                            alert('No se detectó Metamask. Por favor instálalo.');
+                            alert('No se detectó Metamask.');
                             return;
                         }
 
                         status.innerText = 'Abriendo Metamask...';
 
                         try {
-                            // 1. Conectar
                             const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
                             const account = accounts[0];
                             
-                            // 2. Mensaje
                             const msg = "Acceso a Cazador V3";
                             const msgHex = '0x' + Array.from(msg).map(c => c.charCodeAt(0).toString(16)).join('');
                             
                             status.innerText = 'Solicitando firma...';
                             
-                            // 3. Firmar
                             const signature = await window.ethereum.request({
                                 method: 'personal_sign',
                                 params: [msgHex, account],
@@ -159,8 +154,6 @@ if not st.session_state.authenticated:
                             
                             status.innerText = 'Verificando...';
 
-                            // 4. Redirigir a la app con los datos en la URL
-                            // Usamos window.top.location para salir del iframe de Streamlit
                             const currentUrl = new URL(window.top.location.href);
                             currentUrl.searchParams.set('addr', account);
                             currentUrl.searchParams.set('sig', signature);
@@ -184,7 +177,6 @@ if not st.session_state.authenticated:
 # APP PRINCIPAL
 # ==========================================
 
-# BARRA SUPERIOR
 col_logo, col_user = st.columns([8, 2])
 with col_user:
     short_w = f"{st.session_state.wallet_address[:6]}...{st.session_state.wallet_address[-4:]}"
