@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import importlib
-from streamlit_wallet_connect import wallet_connect
+import time
+import json
 
-# --- RECARGAS DE MÓDULOS (Para desarrollo) ---
+# --- RECARGA DE MÓDULOS ---
+# Esto es vital para que pille los cambios en math_core y analyzer sin reiniciar el servidor
 import uni_v3_kit.analyzer
 import uni_v3_kit.data_provider
 import uni_v3_kit.backtester
@@ -20,7 +22,7 @@ importlib.reload(uni_v3_kit.nft_gate)
 from uni_v3_kit.analyzer import MarketScanner
 from uni_v3_kit.data_provider import DataProvider
 from uni_v3_kit.backtester import Backtester
-from uni_v3_kit.nft_gate import check_access
+from uni_v3_kit.nft_gate import check_access, verify_signature
 
 st.set_page_config(page_title="Cazador V3", layout="wide", initial_sidebar_state="collapsed")
 
@@ -32,13 +34,13 @@ st.markdown("""
     h1 {text-align: center; color: #FF4B4B; font-weight: 800;}
     .stButton button {width: 100%; border-radius: 8px; font-weight: bold; height: 3rem;}
     
-    .login-container {
-        max-width: 500px;
-        margin: 50px auto;
-        padding: 2rem;
-        border-radius: 12px;
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
+    .login-box {
+        max-width: 400px;
+        margin: 40px auto;
+        padding: 30px;
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         text-align: center;
     }
 </style>
@@ -64,53 +66,134 @@ def go_to_lab(pool_row):
     st.session_state.selected_pool = pool_row
     st.session_state.step = 'lab'
 
+# --- LÓGICA DE LOGIN (Captura de URL) ---
+# Esta parte lee los parámetros que nos manda el JS tras firmar
+params = st.query_params
+if not st.session_state.authenticated and "sig" in params and "addr" in params:
+    sig = params["sig"]
+    addr = params["addr"]
+    
+    # Limpiamos URL inmediatamente
+    st.query_params.clear()
+    
+    with st.spinner("Verificando firma en la blockchain..."):
+        if verify_signature(addr, sig):
+            has_access, msg = check_access(addr)
+            if has_access:
+                st.session_state.authenticated = True
+                st.session_state.wallet_address = addr
+                st.success(f"¡Bienvenido! {msg}")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(f"Acceso denegado: {msg}")
+        else:
+            st.error("Firma inválida.")
+
 # ==========================================
-# 0. PANTALLA DE LOGIN (WALLET CONNECT)
+# 0. PANTALLA DE LOGIN
 # ==========================================
 if not st.session_state.authenticated:
-    c1, c2, c3 = st.columns([1, 1, 1])
+    st.title("🔒 Acceso Token-Gated")
+    
+    c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.title("🔒 Acceso Restringido")
         st.markdown("""
-        <div class="login-container">
-            <h3>Solo Holders</h3>
-            <p>Conecta tu wallet para verificar el NFT de acceso en <b>Arbitrum</b>.</p>
+        <div class="login-box">
+            <h3>Conectar Wallet</h3>
+            <p style="color: #666;">Firma gratuita para verificar tu NFT en <b>Arbitrum</b>.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # COMPONENTE WALLET CONNECT
-        # Esto renderiza el botón nativo que abre el modal de QR o conecta la extensión
-        st.write("")
-        wallet_address = wallet_connect(label="wallet", key="login_wc")
+        # BOTÓN HTML PURO (Sin dependencias de Python)
+        # Esto ejecuta JS nativo en el navegador del usuario y redirige a la misma página con los datos en la URL
+        components_html = """
+        <html>
+            <head>
+                <style>
+                    button {
+                        background-color: #FF4B4B; color: white; border: none; 
+                        padding: 14px 28px; border-radius: 8px; font-size: 16px; 
+                        font-weight: bold; cursor: pointer; width: 100%;
+                        transition: background 0.3s;
+                    }
+                    button:hover { background-color: #ff3333; }
+                    p { font-family: sans-serif; color: #666; text-align: center; margin-top: 10px; font-size: 14px; }
+                </style>
+            </head>
+            <body>
+                <div style="display: flex; justify-content: center; flex-direction: column; align-items: center;">
+                    <button id="connectBtn">🦊 Conectar Metamask</button>
+                    <p id="status"></p>
+                </div>
+
+                <script>
+                    const btn = document.getElementById('connectBtn');
+                    const status = document.getElementById('status');
+
+                    btn.addEventListener('click', async () => {
+                        if (typeof window.ethereum === 'undefined') {
+                            status.innerText = 'Error: No se detectó Metamask. Instala la extensión.';
+                            alert('No se detectó Metamask. Por favor instálalo.');
+                            return;
+                        }
+
+                        status.innerText = 'Abriendo Metamask...';
+
+                        try {
+                            // 1. Conectar
+                            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                            const account = accounts[0];
+                            
+                            // 2. Mensaje
+                            const msg = "Acceso a Cazador V3";
+                            const msgHex = '0x' + Array.from(msg).map(c => c.charCodeAt(0).toString(16)).join('');
+                            
+                            status.innerText = 'Solicitando firma...';
+                            
+                            // 3. Firmar
+                            const signature = await window.ethereum.request({
+                                method: 'personal_sign',
+                                params: [msgHex, account],
+                            });
+                            
+                            status.innerText = 'Verificando...';
+
+                            // 4. Redirigir a la app con los datos en la URL
+                            // Usamos window.top.location para salir del iframe de Streamlit
+                            const currentUrl = new URL(window.top.location.href);
+                            currentUrl.searchParams.set('addr', account);
+                            currentUrl.searchParams.set('sig', signature);
+                            window.top.location.href = currentUrl.toString();
+
+                        } catch (error) {
+                            console.error(error);
+                            status.innerText = 'Error: ' + error.message;
+                        }
+                    });
+                </script>
+            </body>
+        </html>
+        """
         
-        if wallet_address:
-            # Si el componente devuelve una dirección, procedemos a verificar el NFT
-            with st.spinner(f"Verificando holding en {wallet_address[:6]}..."):
-                has_access, msg = check_access(wallet_address)
-                
-                if has_access:
-                    st.session_state.authenticated = True
-                    st.session_state.wallet_address = str(wallet_address)
-                    st.success("¡Acceso Autorizado!")
-                    st.rerun()
-                else:
-                    st.error(f"Conectado, pero acceso denegado: {msg}")
-    
+        st.components.v1.html(components_html, height=150)
+        
     st.stop()
 
 # ==========================================
-# APLICACIÓN PRINCIPAL
+# APP PRINCIPAL
 # ==========================================
 
+# BARRA SUPERIOR
 col_logo, col_user = st.columns([8, 2])
 with col_user:
     short_w = f"{st.session_state.wallet_address[:6]}...{st.session_state.wallet_address[-4:]}"
-    # Nota: WalletConnect mantiene sesión, para salir 'limpiamente' recargamos la app
-    if st.button(f"🔓 Desconectar ({short_w})", key="logout_btn"):
+    if st.button(f"🔓 Salir ({short_w})", key="logout_btn"):
         st.session_state.authenticated = False
         st.session_state.wallet_address = ""
         st.rerun()
 
+# 1. INICIO
 if st.session_state.step == 'home':
     st.title("🦄 Cazador de Oportunidades Uniswap V3")
     st.markdown("---")
@@ -200,6 +283,7 @@ if st.session_state.step == 'home':
                                 st.rerun()
                             else: st.error("No se encontraron datos.")
 
+# 2. RESULTADOS
 elif st.session_state.step == 'results':
     c_back, c_title = st.columns([1, 6])
     c_back.button("⬅️ Inicio", on_click=go_home)
@@ -239,6 +323,7 @@ elif st.session_state.step == 'results':
         if st.button("Analizar ➡️", use_container_width=True):
             go_to_lab(df_d.iloc[sel_idx]); st.rerun()
 
+# 3. LABORATORIO
 elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
     st.button("⬅️ Volver", on_click=lambda: setattr(st.session_state, 'step', 'results'))
