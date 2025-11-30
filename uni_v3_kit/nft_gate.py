@@ -4,7 +4,7 @@ from eth_account.messages import encode_defunct
 # --- CONFIGURACIÓN ---
 ARBITRUM_RPC = "https://arb1.arbitrum.io/rpc"
 # Contrato NFT (Ejemplo: Arbitrum Odyssey) - CÁMBIALO POR EL TUYO
-NFT_CONTRACT_ADDRESS = "0xfae39ec09230af339877e09549438c436022207c" 
+NFT_CONTRACT_ADDRESS = "0xF4820467171695F4d2760614C77503147A9CB1E8" 
 
 ERC721_ABI = [
     {
