@@ -1,29 +1,20 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import importlib
 import time
 from streamlit_javascript import st_javascript
 
-# --- RECARGAS DE MÓDULOS (Para desarrollo) ---
-# Usamos rutas absolutas (uni_v3_kit.nombre)
-import uni_v3_kit.analyzer
-import uni_v3_kit.data_provider
-import uni_v3_kit.backtester
-import uni_v3_kit.math_core
-import uni_v3_kit.nft_gate
-
-importlib.reload(uni_v3_kit.math_core)
-importlib.reload(uni_v3_kit.analyzer)
-importlib.reload(uni_v3_kit.data_provider)
-importlib.reload(uni_v3_kit.backtester)
-importlib.reload(uni_v3_kit.nft_gate)
-
-# --- IMPORTACIONES DE CLASES ---
-from uni_v3_kit.analyzer import MarketScanner
-from uni_v3_kit.data_provider import DataProvider
-from uni_v3_kit.backtester import Backtester
-from uni_v3_kit.nft_gate import check_access, verify_signature
+# --- IMPORTACIONES ---
+# Streamlit recarga automáticamente los módulos si cambian, no hace falta forzarlo manualmente
+# a menos que estés editando librerías en caliente, lo cual no es recomendable en producción.
+try:
+    from uni_v3_kit.analyzer import MarketScanner
+    from uni_v3_kit.data_provider import DataProvider
+    from uni_v3_kit.backtester import Backtester
+    from uni_v3_kit.nft_gate import check_access, verify_signature
+except ImportError as e:
+    st.error(f"Error crítico importando librerías: {e}")
+    st.stop()
 
 st.set_page_config(page_title="Cazador V3", layout="wide", initial_sidebar_state="collapsed")
 
@@ -36,7 +27,6 @@ st.markdown("""
     .stButton button {width: 100%; border-radius: 8px; font-weight: bold; height: 3rem;}
     div[data-testid="stMetricValue"] {font-size: 1.6rem; color: #31333F;}
     
-    /* Login Box */
     .login-container {
         max-width: 500px;
         margin: 50px auto;
@@ -83,7 +73,6 @@ if not st.session_state.authenticated:
         </div>
         """, unsafe_allow_html=True)
         
-        # --- Lógica de Conexión con JS ---
         js_code = """
         async function login() {
             try {
@@ -111,7 +100,6 @@ if not st.session_state.authenticated:
         
         if st.button("🦊 Conectar Wallet y Firmar"):
             with st.spinner("Esperando firma en Metamask..."):
-                # Ejecutamos JS y esperamos retorno
                 result = st_javascript(js_code)
                 
                 if result:
@@ -120,7 +108,6 @@ if not st.session_state.authenticated:
                     elif str(result).startswith("ERROR"):
                         st.error(f"Error: {result}")
                     elif "|" in str(result):
-                        # ÉXITO: Procesamos firma
                         addr, sig = str(result).split("|")
                         
                         if verify_signature(addr, sig):
@@ -138,10 +125,10 @@ if not st.session_state.authenticated:
                     elif result == 0: 
                         pass 
 
-    st.stop() # Detiene la app si no está autenticado
+    st.stop() 
 
 # ==========================================
-# BARRA SUPERIOR (Logout)
+# BARRA SUPERIOR
 # ==========================================
 col_logo, col_user = st.columns([8, 2])
 with col_user:
@@ -226,18 +213,12 @@ if st.session_state.step == 'home':
             with st.form("manual_form"):
                 st.markdown("### 🎯 Análisis Directo")
                 address = st.text_input("Dirección del Contrato (0x...):")
-                
                 c_a, c_b = st.columns(2)
-                with c_a:
-                    dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7)
-                with c_b:
-                    sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0)
+                with c_a: dias_window = st.slider("Ventana Análisis (Días)", 3, 30, 7)
+                with c_b: sd_mult = st.slider("Factor Rango (SD)", 0.1, 3.0, 1.0)
                 
-                submitted_manual = st.form_submit_button("🔎 Analizar Pool")
-                
-                if submitted_manual:
-                    if not address:
-                        st.error("Introduce una dirección.")
+                if st.form_submit_button("🔎 Analizar Pool"):
+                    if not address: st.error("Introduce una dirección.")
                     else:
                         scanner = MarketScanner()
                         with st.spinner("Buscando datos..."):
@@ -246,8 +227,7 @@ if st.session_state.step == 'home':
                                 st.session_state.scan_params = {'dias': dias_window, 'sd': sd_mult}
                                 go_to_results(df)
                                 st.rerun()
-                            else:
-                                st.error("No se encontraron datos para esa dirección.")
+                            else: st.error("No se encontraron datos.")
 
 # ==========================================
 # 2. RESULTADOS
@@ -263,43 +243,30 @@ elif st.session_state.step == 'results':
     
     st.info(f"**Criterio:** Fees Probables ({dias}d) vs Riesgo Salida ({sd} SD). Ordenado por Ratio F/IL.")
     
-    # Preparamos visualización
     df_display = df.copy()
     col_apr = [c for c in df_display.columns if "APR (" in c][0]
-    # APR viene decimal (0.8), mostramos 80.0%
     df_display[col_apr] = df_display[col_apr] * 100
     
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Address": None, 
-            "TVL": st.column_config.NumberColumn(format="$%d"),
-            col_apr: st.column_config.NumberColumn(format="%.1f%%"),
-            "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
-            "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
-            "Est. Fees": st.column_config.NumberColumn(f"Fees Prob.", format="%.2f%%"),
-            "IL": st.column_config.NumberColumn("IL (Riesgo)", format="%.2f%%"),
-            "Ratio F/IL": st.column_config.NumberColumn("Ratio F/IL", format="%.2f", help="Mayor es mejor"),
-            "Margen": None 
-        }
-    )
+    st.dataframe(df_display, use_container_width=True, hide_index=True, column_config={
+        "Address": None, "TVL": st.column_config.NumberColumn(format="$%d"),
+        col_apr: st.column_config.NumberColumn(format="%.1f%%"),
+        "Volatilidad": st.column_config.NumberColumn(format="%.1f%%"),
+        "Rango Est.": st.column_config.NumberColumn("Rango (±%)", format="%.1f%%"),
+        "Est. Fees": st.column_config.NumberColumn(f"Fees Prob.", format="%.2f%%"),
+        "IL": st.column_config.NumberColumn("IL (Riesgo)", format="%.2f%%"),
+        "Ratio F/IL": st.column_config.NumberColumn("Ratio F/IL", format="%.2f", help="Mayor es mejor"),
+        "Margen": None 
+    })
     
     st.subheader("🧪 Pasar al Laboratorio")
     c1, c2 = st.columns([3, 1])
     with c1:
-        def format_option(idx):
-            row = df.iloc[idx]
-            return f"{row['Par']} ({row['DEX']} - {row['Red']}) | Ratio: {row['Ratio F/IL']:.2f}"
-        
-        sel_idx = st.selectbox("Selecciona pool:", options=df.index, format_func=format_option)
+        df_d = df.reset_index(drop=True)
+        sel_idx = st.selectbox("Pool:", df_d.index, format_func=lambda i: f"{df_d.iloc[i]['Par']} ({df_d.iloc[i]['DEX']}) | Ratio: {df_d.iloc[i]['Ratio F/IL']:.2f}")
     with c2:
         st.write(""); st.write("")
         if st.button("Ir al Laboratorio ➡️", use_container_width=True):
-            row = df.iloc[sel_idx]
-            go_to_lab(row)
-            st.rerun()
+            go_to_lab(df_d.iloc[sel_idx]); st.rerun()
 
 # ==========================================
 # 3. LABORATORIO
@@ -307,110 +274,57 @@ elif st.session_state.step == 'results':
 elif st.session_state.step == 'lab':
     pool = st.session_state.selected_pool
     st.button("⬅️ Volver", on_click=lambda: setattr(st.session_state, 'step', 'results'))
-    
     st.title(f"🧪 Lab: {pool['Par']}")
     col_apr_lab = [c for c in pool.index if "APR (" in c][0]
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("DEX", f"{pool['DEX']} ({pool['Red']})") 
+    c1.metric("DEX", pool['DEX'])
     c2.metric("TVL", f"${pool['TVL']:,.0f}")
-    val_apr = pool[col_apr_lab] * 100 
-    c3.metric("APR Medio", f"{val_apr:.1f}%")
+    c3.metric("APR", f"{pool[col_apr_lab]*100:.1f}%")
     c4.metric("Volatilidad", f"{pool['Volatilidad']:.1f}%")
     
     st.markdown("---")
-    
     with st.container():
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("⚙️ Simulación")
-            inversion = st.number_input("Inversión ($)", 1000, 1000000, 10000)
-            dias_sim = st.slider("Días a Simular", 7, 180, 30)
+            inv = st.number_input("Inversión ($)", 1000)
+            d_sim = st.slider("Días Simulación", 7, 180, 30)
         with c2:
             st.subheader("🎯 Estrategia")
-            sd_def = st.session_state.scan_params.get('sd', 1.0)
-            vol_def = st.session_state.scan_params.get('dias', 7)
+            sd = st.slider("Rango (SD)", 0.1, 3.0, st.session_state.scan_params.get('sd', 1.0))
+            vol_d = st.slider("Ventana Volatilidad", 3, 30, st.session_state.scan_params.get('dias', 7))
+            reb = st.checkbox("Auto-Rebalancear", False)
             
-            sd_mult_lab = st.slider("Amplitud Rango (SD)", 0.1, 3.0, sd_def, step=0.1)
-            vol_days_lab = st.slider("Ventana Volatilidad", 3, 30, vol_def)
-            auto_rebalance = st.checkbox("Auto-Rebalancear (Coste 0.3%)", value=False)
-    
-    if st.button("🚀 Ejecutar Simulación Histórica", use_container_width=True):
-        address = pool.get('Address')
-        if not address: st.error("Error: Falta dirección.")
+    if st.button("🚀 Ejecutar", use_container_width=True):
+        addr = pool.get('Address')
+        if not addr: st.error("Error dirección")
         else:
             with st.spinner("Simulando..."):
-                provider = DataProvider()
-                tester = Backtester()
-                history_data = provider.get_pool_history(address).get('history', [])
+                prov = DataProvider()
+                back = Backtester()
+                hist = prov.get_pool_history(addr).get('history', [])
                 
-                fee_est = 0.003 
-                if "0.05%" in str(pool['Par']): fee_est = 0.0005
-                elif "0.01%" in str(pool['Par']): fee_est = 0.0001
-                elif "1%" in str(pool['Par']): fee_est = 0.01
-                elif "0.3%" in str(pool['Par']): fee_est = 0.003
-
-                df_res, min_p, max_p, meta = tester.run_simulation(
-                    history_data, inversion, sd_mult_lab, 
-                    sim_days=dias_sim, vol_days=vol_days_lab, 
-                    fee_tier=fee_est, auto_rebalance=auto_rebalance
-                )
+                fee = 0.003
+                if "0.05%" in str(pool['Par']): fee = 0.0005
+                elif "0.01%" in str(pool['Par']): fee = 0.0001
                 
-                if df_res is not None and not df_res.empty:
-                    last = df_res.iloc[-1]
-                    roi_v3 = (last['Valor Total'] - inversion) / inversion
-                    roi_hodl = (last['HODL Value'] - inversion) / inversion
-                    
+                df_r, min_p, max_p, meta = back.run_simulation(hist, inv, sd, d_sim, vol_d, fee, reb)
+                
+                if df_r is not None and not df_r.empty:
+                    last = df_r.iloc[-1]
+                    roi_v3 = (last['Valor Total'] - inv)/inv
                     k1, k2, k3 = st.columns(3)
-                    k1.metric("Valor Final V3", f"${last['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
-                    k2.metric("Valor HODL", f"${last['HODL Value']:,.0f}", delta=f"{roi_hodl*100:.2f}%")
-                    k3.metric("Fees Totales", f"${last['Fees Acum']:,.2f}")
+                    k1.metric("Final V3", f"${last['Valor Total']:,.0f}", delta=f"{roi_v3*100:.2f}%")
+                    k2.metric("Fees", f"${last['Fees Acum']:,.2f}")
+                    k3.metric("Rebalanceos", meta['rebalances'])
                     
-                    if auto_rebalance: st.info(f"🔄 **{meta['rebalances']} rebalanceos** realizados.")
+                    st.info(f"Rango Inicial: ±{meta['initial_range_width_pct']*100:.1f}%.")
                     
-                    p_ini = df_res.iloc[0]['Price']
-                    w_pct = meta['initial_range_width_pct'] * 100
-                    st.info(f"**Rango Inicial:** ±{w_pct:.1f}%. Entrada: {p_ini:.4f}. Límites: {min_p:.4f} - {max_p:.4f}")
+                    fig = px.line(df_r, x='Date', y=['Valor Total', 'HODL Value'], title="Rendimiento")
+                    st.plotly_chart(fig, use_container_width=True)
                     
-                    st.subheader("💰 Rendimiento")
-                    fig1 = px.line(df_res, x='Date', y=['Valor Total', 'HODL Value'], 
-                                   color_discrete_map={"Valor Total": "#00CC96", "HODL Value": "#EF553B"},
-                                   title="Rendimiento Acumulado")
-                    st.plotly_chart(fig1, use_container_width=True)
-                    
-                    st.subheader("📊 Precio y Rangos")
-                    df_res['Estado'] = df_res['In Range'].apply(lambda x: '🟢 En Rango' if x else '🔴 Fuera')
-                    df_res['Ancho Rango'] = df_res['Range Width %'].apply(lambda x: f"±{x:.1f}%")
-
-                    fig_price = px.scatter(df_res, x='Date', y='Price', color='Estado',
-                                           color_discrete_map={'🟢 En Rango': 'green', '🔴 Fuera': 'red'},
-                                           hover_data={'Ancho Rango': True})
-                    fig_price.add_traces(px.line(df_res, x='Date', y='Price').update_traces(line=dict(color='lightgray', width=1)).data[0])
-                    
-                    if not auto_rebalance:
-                        fig_price.add_hline(y=min_p, line_dash="dash", line_color="red")
-                        fig_price.add_hline(y=max_p, line_dash="dash", line_color="green")
-                    else:
-                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Min').update_traces(line=dict(color='red', dash='dash')).data[0])
-                        fig_price.add_traces(px.line(df_res, x='Date', y='Range Max').update_traces(line=dict(color='green', dash='dash')).data[0])
-                        
-                    st.plotly_chart(fig_price, use_container_width=True)
-                    
-                    with st.expander("Ver Tabla Detallada"):
+                    with st.expander("Detalle"):
                         cols = ["Date", "Price", "Range Min", "Range Max", "Range Width %", "APR Period", "Fees Period", "Valor Total"]
-                        st.dataframe(
-                            df_res[cols],
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "Date": st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY HH:mm"),
-                                "Price": st.column_config.NumberColumn("Precio", format="%.4f"),
-                                "Range Min": st.column_config.NumberColumn("Min", format="%.4f"),
-                                "Range Max": st.column_config.NumberColumn("Max", format="%.4f"),
-                                "Range Width %": st.column_config.NumberColumn("Ancho (±%)", format="%.2f %%"),
-                                "APR Period": st.column_config.NumberColumn("APR Anual (Inst.)", format="%.2f%%"),
-                                "Fees Period": st.column_config.NumberColumn("Fees (8h)", format="$%.2f"),
-                                "Valor Total": st.column_config.NumberColumn("Total", format="$%.2f"),
-                            }
-                        )
+                        st.dataframe(df_r[cols], use_container_width=True)
                 else: st.error("Datos insuficientes.")
