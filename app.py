@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import importlib
-import time
-import json
+from streamlit_wallet_connect import wallet_connect
 
-# --- RECARGAS DE MÓDULOS ---
+# --- RECARGAS (Desarrollo) ---
 import uni_v3_kit.analyzer
 import uni_v3_kit.data_provider
 import uni_v3_kit.backtester
@@ -21,7 +20,7 @@ importlib.reload(uni_v3_kit.nft_gate)
 from uni_v3_kit.analyzer import MarketScanner
 from uni_v3_kit.data_provider import DataProvider
 from uni_v3_kit.backtester import Backtester
-from uni_v3_kit.nft_gate import check_access, verify_signature
+from uni_v3_kit.nft_gate import check_access
 
 st.set_page_config(page_title="Cazador V3", layout="wide", initial_sidebar_state="collapsed")
 
@@ -65,33 +64,8 @@ def go_to_lab(pool_row):
     st.session_state.selected_pool = pool_row
     st.session_state.step = 'lab'
 
-# --- LÓGICA DE LOGIN (Captura de URL) ---
-params = st.query_params
-if not st.session_state.authenticated and "sig" in params and "addr" in params:
-    try:
-        sig = params["sig"]
-        addr = params["addr"]
-        
-        st.query_params.clear()
-        
-        with st.spinner("Verificando credenciales..."):
-            if verify_signature(addr, sig):
-                has_access, msg = check_access(addr)
-                if has_access:
-                    st.session_state.authenticated = True
-                    st.session_state.wallet_address = addr
-                    st.success(f"¡Bienvenido! {msg}")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error(f"Acceso denegado: {msg}")
-            else:
-                st.error("Firma inválida.")
-    except Exception as e:
-        st.error(f"Error en login: {e}")
-
 # ==========================================
-# 0. PANTALLA DE LOGIN
+# 0. PANTALLA DE LOGIN (WALLET CONNECT)
 # ==========================================
 if not st.session_state.authenticated:
     c1, c2, c3 = st.columns([1, 1, 1])
@@ -99,90 +73,48 @@ if not st.session_state.authenticated:
         st.title("🔒 Acceso Token-Gated")
         st.markdown("""
         <div class="login-container">
-            <h3>Conectar Wallet</h3>
-            <p style="color: #666;">Firma gratuita para verificar tu NFT en <b>Arbitrum</b>.</p>
+            <h3>Solo Holders</h3>
+            <p>Conecta tu wallet para verificar el NFT de acceso en <b>Arbitrum</b>.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # BOTÓN HTML PURO
-        components_html = """
-        <html>
-            <head>
-                <style>
-                    button {
-                        background-color: #FF4B4B; color: white; border: none; 
-                        padding: 14px 28px; border-radius: 8px; font-size: 16px; 
-                        font-weight: bold; cursor: pointer; width: 100%;
-                        transition: background 0.3s; font-family: sans-serif;
-                    }
-                    button:hover { background-color: #ff3333; }
-                    p { font-family: sans-serif; color: #666; text-align: center; margin-top: 10px; font-size: 14px; }
-                </style>
-            </head>
-            <body>
-                <div style="display: flex; justify-content: center; flex-direction: column; align-items: center;">
-                    <button id="connectBtn">🦊 Conectar Metamask</button>
-                    <p id="status"></p>
-                </div>
-
-                <script>
-                    const btn = document.getElementById('connectBtn');
-                    const status = document.getElementById('status');
-
-                    btn.addEventListener('click', async () => {
-                        if (typeof window.ethereum === 'undefined') {
-                            status.innerText = 'Error: No se detectó Metamask. Instala la extensión.';
-                            alert('No se detectó Metamask.');
-                            return;
-                        }
-
-                        status.innerText = 'Abriendo Metamask...';
-
-                        try {
-                            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-                            const account = accounts[0];
-                            
-                            const msg = "Acceso a Cazador V3";
-                            const msgHex = '0x' + Array.from(msg).map(c => c.charCodeAt(0).toString(16)).join('');
-                            
-                            status.innerText = 'Solicitando firma...';
-                            
-                            const signature = await window.ethereum.request({
-                                method: 'personal_sign',
-                                params: [msgHex, account],
-                            });
-                            
-                            status.innerText = 'Verificando...';
-
-                            const currentUrl = new URL(window.top.location.href);
-                            currentUrl.searchParams.set('addr', account);
-                            currentUrl.searchParams.set('sig', signature);
-                            window.top.location.href = currentUrl.toString();
-
-                        } catch (error) {
-                            console.error(error);
-                            status.innerText = 'Error: ' + error.message;
-                        }
-                    });
-                </script>
-            </body>
-        </html>
-        """
+        # COMPONENTE OFICIAL WALLET CONNECT
+        # Esto crea el botón "Connect Wallet" automáticamente
+        st.write("") # Espaciado
+        connected_address = wallet_connect(label="wallet", key="login_wallet")
         
-        st.components.v1.html(components_html, height=150)
-        
-    st.stop()
+        # Lógica de verificación
+        if connected_address:
+            # Si la librería devuelve una dirección, significa que el usuario conectó su wallet
+            # Ahora verificamos si esa dirección tiene el NFT
+            with st.spinner(f"Verificando NFT en {connected_address[:6]}..."):
+                has_access, msg = check_access(str(connected_address))
+                
+                if has_access:
+                    st.session_state.authenticated = True
+                    st.session_state.wallet_address = str(connected_address)
+                    st.success("¡Acceso Autorizado!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(f"Conectado, pero acceso denegado: {msg}")
+                    # Opción para desconectar si falló (simulada, ya que la librería mantiene sesión)
+                    if st.button("Intentar con otra cuenta"):
+                        st.session_state.wallet_address = ""
+                        st.rerun()
+
+    st.stop() # Detiene la ejecución si no está logueado
 
 # ==========================================
-# APP PRINCIPAL
+# APLICACIÓN PRINCIPAL (DASHBOARD)
 # ==========================================
 
+# Barra Superior
 col_logo, col_user = st.columns([8, 2])
 with col_user:
     short_w = f"{st.session_state.wallet_address[:6]}...{st.session_state.wallet_address[-4:]}"
     if st.button(f"🔓 Salir ({short_w})", key="logout_btn"):
         st.session_state.authenticated = False
-        st.session_state.wallet_address = ""
         st.rerun()
 
 # 1. INICIO
