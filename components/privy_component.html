@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Privy Auth Component</title>
+  <script src="https://unpkg.com/@privy-io/react-auth@1.58.3/dist/index.iife.js"></script>
+  <script>
+    // Función para enviar datos desde el componente HTML a Streamlit (Python )
+    function sendValueToStreamlit(value) {
+      Streamlit.setComponentValue(value);
+    }
+
+    async function login() {
+      try {
+        const privy = new Privy.PrivyProvider({
+          appId: '{{PRIVY_APP_ID}}', // Esto será reemplazado por Python
+          config: {
+            loginMethods: ['wallet'],
+            appearance: {
+              theme: 'light',
+              accentColor: '#676FFF',
+              logo: 'https://your-logo-url.com/logo.png',
+            },
+          },
+        } );
+        
+        // Espera a que el usuario se autentique
+        await privy.getAccessToken();
+        const accessToken = await privy.getAccessToken();
+
+        if (accessToken) {
+            // Si la autenticación es exitosa, envía el token a Python
+            sendValueToStreamlit({token: accessToken});
+        } else {
+            sendValueToStreamlit({error: 'Authentication failed.'});
+        }
+      } catch (error) {
+        console.error(error);
+        sendValueToStreamlit({error: error.message});
+      }
+    }
+  </script>
+</head>
+<body>
+  <button onclick="login()">Conectar Billetera y Verificar</button>
+  <script>
+    // Informa a Streamlit que el componente está listo
+    Streamlit.setFrameHeight(50);
+  </script>
+</body>
+</html>
