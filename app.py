@@ -1,101 +1,92 @@
 import streamlit as st
-import streamlit.components.v1 as components
-from privy import PrivyAPI
-from moralis import evm_api
-import os
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
+# Configuración de la página
 st.set_page_config(
-    page_title="App Segura con Privy",
-    page_icon="🔐",
-    layout="centered"
+    page_title="Looping Master - Campamento DeFi",
+    page_icon="mascota.png", 
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# --- CONFIGURACIÓN DEL TOKEN GATING ---
-# ¡IMPORTANTE! Reemplaza este valor con la dirección de tu contrato de NFT.
-NFT_CONTRACT_ADDRESS = "0xF4820467171695F4d2760614C77503147A9CB1E8" # <-- CAMBIA ESTO
-CHAIN = "arbitrum"
+# CSS para ocultar marcas y limpiar la interfaz
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- CARGAR SECRETOS DE FORMA SEGURA ---
-try:
-    PRIVY_APP_ID = st.secrets["PRIVY_APP_ID"]
-    PRIVY_APP_SECRET = st.secrets["PRIVY_APP_SECRET"]
-    MORALIS_API_KEY = st.secrets["MORALIS_API_KEY"]
-except KeyError as e:
-    st.error(f"Error: El secreto {e.args[0]} no fue encontrado. Por favor, configúralo en Streamlit Cloud.")
-    st.stop()
+# --- FILA 1: CABECERA (Mascota + Bienvenida) ---
+# Ajustamos la proporción a [1, 3] para que la columna de la imagen (izquierda)
+# sea más estrecha y, por tanto, la mascota se vea más pequeña.
+col_img, col_text = st.columns([1, 3], gap="large")
 
-# --- INICIALIZAR CLIENTES DE API ---
-privy_client = PrivyAPI(PRIVY_APP_ID, PRIVY_APP_SECRET)
-
-# --- INTERFAZ DE USUARIO ---
-st.title("💎 Verificación de Holder con Firma Segura 💎")
-st.write("Para acceder al contenido exclusivo, debes verificar que eres el dueño de un NFT específico conectando tu billetera.")
-st.write("--- ")
-
-# --- LÓGICA PRINCIPAL ---
-# Usamos st.session_state para guardar el estado de la autenticación
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-
-# Si el usuario ya está autenticado y verificado, muestra el contenido
-if st.session_state.authenticated:
-    st.success("¡Autenticación y verificación completadas! Bienvenido. 🎉")
-    st.balloons()
-    
-    # --- CONTENIDO EXCLUSIVO ---
-    st.header("Área Secreta para Holders")
-    st.write("Este es el contenido exclusivo que has desbloqueado.")
-    st.image("https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM2t2eGJkZ2dveWJtN2VqdGg2eXNpcjZqZzZqenBma3JzNnBqY2VpZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/NEvPzZ8bd1V4Y/giphy.gif", caption="¡Acceso concedido!" )
-
-else:
-    # Si no está autenticado, muestra el componente de login
-    st.subheader("Paso 1: Conecta tu Billetera")
-    st.caption("Al hacer clic, se abrirá la interfaz de Privy para que conectes tu billetera de forma segura.")
-
-    # Cargar el componente HTML
+with col_img:
     try:
-        with open(os.path.join('components', 'privy_component.html'), 'r') as f:
-            html_content = f.read()
+        st.image("mascota.png", use_container_width=True)
+    except:
+        st.warning("⚠️ Falta 'mascota.png'")
+
+with col_text:
+    st.title("Bienvenido al Campamento DeFi")
+    st.markdown("### Tu centro de comando para operaciones On-Chain.")
+    st.markdown("""
+    Aquí tienes las herramientas profesionales diseñadas para gestionar tu riesgo y optimizar tus rendimientos.
+    
+    **Selecciona una herramienta para empezar:**
+    """)
+
+st.write("") # Espacio separador vertical
+
+# --- FILA 2: MENÚ DE HERRAMIENTAS (4 Columnas) ---
+# Ahora estas columnas ocupan todo el ancho, dando más espacio a cada tarjeta
+c_loop, c_dca, c_pool, c_hunter = st.columns(4)
+
+# Columna 1: Looping
+with c_loop:
+    with st.container(border=True):
+        st.markdown("#### 🔄 Looping Master")
+        st.caption("Aave: Liquidaciones y Salud.")
+        st.page_link("pages/01_🔄_Looping.py", label="Abrir Herramienta", icon="🚀", use_container_width=True)
         
-        # Reemplazar el placeholder con el App ID real
-        html_content = html_content.replace('{{PRIVY_APP_ID}}', PRIVY_APP_ID)
-        
-        # Renderizar el componente y esperar una respuesta
-        component_value = components.html(html_content, height=60)
+# Columna 2: DCA
+with c_dca:
+    with st.container(border=True):
+        st.markdown("#### 💰 Simulador DCA")
+        st.caption("Bitcoin: Estrategia Acumulación.")
+        st.page_link("pages/02_💰_DCA_Bitcoin.py", label="Abrir Herramienta", icon="📈", use_container_width=True)
 
-        if component_value:
-            if 'error' in component_value:
-                st.error(f"Error de autenticación: {component_value['error']}")
-            elif 'token' in component_value:
-                access_token = component_value['token']
-                
-                with st.spinner("Verificando token y buscando tu NFT..."):
-                    try:
-                        # Paso 1: Verificar el token con Privy
-                        auth_info = privy_client.verify_auth_token(access_token)
-                        user_wallet = auth_info.user_id
-                        st.info(f"Token verificado. Dirección de billetera: {user_wallet}")
+# Columna 3: Optimizador Pools
+with c_pool:
+    with st.container(border=True):
+        st.markdown("#### 💧 Optimizador Pools")
+        st.caption("Uniswap V3: Gestión de Liquidez.")
+        st.page_link("pages/03_💧_Optimizador_Pools.py", label="Abrir Herramienta", icon="🦄", use_container_width=True)
 
-                        # Paso 2: Verificar la posesión del NFT con Moralis
-                        result = evm_api.nft.get_wallet_nfts(
-                            api_key=MORALIS_API_KEY,
-                            params={
-                                "address": user_wallet,
-                                "chain": CHAIN,
-                                "token_addresses": [NFT_CONTRACT_ADDRESS]
-                            }
-                        )
+# Columna 4: Cazador de Pools (NUEVA)
+with c_hunter:
+    with st.container(border=True):
+        st.markdown("#### 🏹 Cazador Pools")
+        st.caption("DeFi: Oportunidades de Yield.")
+        # Usamos link_button para URLs externas manteniendo la estética
+        st.link_button("Abrir Herramienta", url="https://lab.campamentodefi.com/Cazador_Pools", icon="🎯", use_container_width=True)
 
-                        if result.get("result") and len(result["result"]) > 0:
-                            # Si todo es correcto, marca al usuario como autenticado y recarga la página
-                            st.session_state.authenticated = True
-                            st.experimental_rerun()
-                        else:
-                            st.warning("Acceso Denegado. La billetera conectada no posee el NFT requerido.")
+# Aviso de próximas herramientas
+st.write("")
+st.info("🚧 **Próximamente:** Más cosicas buenas para ayudarte a tomar mejores decisiones.")
 
-                    except Exception as e:
-                        st.error(f"Ocurrió un error durante la verificación: {e}")
-
-    except FileNotFoundError:
-        st.error("Error: No se encontró el archivo 'components/privy_component.html'. Asegúrate de que la carpeta y el archivo existen en tu repositorio.")
+st.divider()
+# ==============================================================================
+#  GLOBAL FOOTER (Pie de página común para todas las pestañas)
+# ==============================================================================
+st.markdown(
+    """
+    <div style='text-align: center; color: #666;'>
+        Desarrollado con ❤️ por <a href='https://lab.campamentodefi.com' target='_blank' style='text-decoration: none; color: #FF4B4B;'>Campamento DeFi</a>, 
+        el lugar de reunión de los seres <a href='https://link.soypepediaz.com/labinconfiscable' target='_blank' style='text-decoration: none; color: #FF4B4B;'>Inconfiscables</a>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
